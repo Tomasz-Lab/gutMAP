@@ -224,8 +224,12 @@ process BAKTA_ANNOTATION {
 
     script:
     """
+    MEMFS_DB=\$MEMFS/db
+    echo \$MEMFS/db
+    cp ${params.bakta_db} \$MEMFS_DB -r
+
     bakta \
-    --db ${params.bakta_db} \
+    --db \$MEMFS_DB \
     --output ${sample_id}.bakta \
     --prefix ${sample_id} \
     --threads ${task.cpus} \
