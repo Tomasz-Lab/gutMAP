@@ -92,8 +92,6 @@ workflow {
         SYLPH_TAXONOMY.out.collect(),
         MEGAHIT_ASSEMBLY.out.assembly.map{ it[1] }.collect(),
         BAKTA_ANNOTATION.out.annotation_dir.map{ it[1] }.collect(),
-        //CREATE_GENE_CATALOG.out,
-        //QUANTIFY_ABUNDANCE.out.collect(),
         METABAT2_BINNING.out.bins.map{ it[1] }.collect(),
         CHECKM_QA.out.checkm_dir.map{ it[1] }.collect()
     )
@@ -252,43 +250,6 @@ process BAKTA_ANNOTATION {
     """
 }
 
-// process CREATE_GENE_CATALOG {
-//     tag "Gene Catalog: CD-HIT"
-//     publishDir "$params.outdir/branch2_annotation/gene_catalog_dir", mode: 'symlink'
-//     // Added seqtk to the environment
-//     conda "cd-hit bowtie2 seqtk"
-
-//     input:
-//         path protein_files   // List of all .faa files
-//         path nucleotide_files // List of all .ffn files
-
-//     output:
-//         path "gene_catalog" // Output the entire directory
-
-//     script:
-//     """
-//     # 1. Combine all protein and nucleotide files from all samples
-//     cat ${protein_files.join(' ')} > all_proteins.faa
-//     cat ${nucleotide_files.join(' ')} > all_nucleotides.ffn
-
-//     # 2. Cluster the PROTEINS to create a non-redundant set
-//     cd-hit -i all_proteins.faa -o gene_catalog.faa -c 0.95 -n 5 -M 0 -T ${task.cpus}
-
-//     # 3. Extract the headers of the representative protein sequences
-//     grep "^>" gene_catalog.faa | sed 's/>//' > representative_headers.txt
-
-//     # 4. Use the headers to pull the corresponding NUCLEOTIDE sequences
-//     seqtk subseq all_nucleotides.ffn representative_headers.txt > gene_catalog.fna
-
-//     # 5. Build the bowtie2 index from the NUCLEOTIDE gene catalog
-//     mkdir gene_catalog
-//     mv gene_catalog.fna gene_catalog/
-//     mv gene_catalog.faa gene_catalog/
-//     mv gene_catalog.faa.clstr gene_catalog/
-//     bowtie2-build gene_catalog/gene_catalog.fna gene_catalog/gene_catalog.fna.idx
-//     """
-// }
-
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
@@ -388,38 +349,6 @@ process CALCULATE_TPM_AND_ANNOTATE {
     awk 'BEGIN{FS=OFS="\\t"} FNR==NR{if(FNR>1)desc[\$6]=\$8; next} {if(FNR==1)print "gene_id","description","tpm"; else print \$1,desc[\$1],\$4}' ${tsv_file} ${abundances_file} > ${sampleid}_gene_quantification.txt
     """
 }
-
-
-// process QUANTIFY_ABUNDANCE {
-//     tag "Quantify: $sample_id"
-//     publishDir "$params.outdir/branch2_annotation/abundances/$sample_id", mode: 'symlink'
-//     conda "bowtie2 samtools"
-
-//     input:
-//         tuple val(sample_id), path(reads), path(index_directory)
-
-//     output:
-//         path "${sample_id}.abundances.tsv"      // The main output is now just the abundance file.
-//         path "${sample_id}.bowtie2.log", emit: log // The log is sent to a separate, named channel.
-
-//     script:
-//     // This line is now corrected to point to the nucleotide index (.fna.idx)
-//     def index_base = "${index_directory}/gene_catalog.fna.idx"
-//     """
-//     bowtie2 \\
-//         --very-sensitive-local \\
-//         -x ${index_base} \\
-//         -1 ${reads[0]} \\
-//         -2 ${reads[1]} \\
-//         --threads ${task.cpus} \\
-//         --no-unal \\
-//         -S temp.sam 2> ${sample_id}.bowtie2.log
-
-//     samtools view -bS temp.sam | samtools sort -o ${sample_id}.sorted.bam -
-//     rm temp.sam
-//     samtools depth -a ${sample_id}.sorted.bam > ${sample_id}.abundances.tsv
-//     """
-// }
 
 // =======================================================
 // --- BRANCH 3 PROCESSES ---
