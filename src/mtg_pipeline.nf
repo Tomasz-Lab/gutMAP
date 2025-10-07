@@ -224,7 +224,27 @@ process BAKTA_ANNOTATION {
 
     script:
     """
-    bakta --db ${params.bakta_db} --output ${sample_id}.bakta --prefix ${sample_id} --verbose --threads ${task.cpus} ${contigs_fa}/final.contigs.fa
+    bakta \
+    --db ${params.bakta_db} \
+    --output ${sample_id}.bakta \
+    --prefix ${sample_id} \
+    --threads ${task.cpus} \
+    --debug \
+    --verbose \
+    --skip-trna \
+    --skip-tmrna \
+    --skip-rrna \
+    --skip-ncrna \
+    --skip-ncrna-region \
+    --skip-crispr \
+    --skip-pseudo \
+    --skip-gap \
+    --skip-ori \
+    --skip-filter \
+    --skip-plot \
+    ${contigs_fa}/final.contigs.fa
+
+    rm -rf \$MEMFS/db
     """
 }
 
