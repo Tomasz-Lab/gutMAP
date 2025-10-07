@@ -340,7 +340,6 @@ process ALIGN_AND_QUANTIFY_READS {
 
 process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${meta.id}"
-    conda "bioconda::gawk=5.3.0 python=3.11"
 
     input:
         tuple val(meta), path(idxstats), path(tsv_file)
@@ -352,7 +351,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
     def sampleid = meta.id
     def abundances_file = "${sampleid}_gene_abundances.txt"
     """
-    #!/usr/bin/env python3
+    python3 - <<'EOF'
     import sys
 
     gene_lengths = {}
@@ -383,6 +382,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
             rpk = reads / (length / 1000.0)
             tpm = rpk / scaling_factor if scaling_factor > 0 else 0
             out_file.write(f"{gene_id}\\t{length}\\t{reads}\\t{tpm}\\n")
+    EOF
 
     # Join TPM values with gene descriptions
     awk 'BEGIN{FS=OFS="\\t"} FNR==NR{if(FNR>1)desc[\$6]=\$8; next} {if(FNR==1)print "gene_id","description","tpm"; else print \$1,desc[\$1],\$4}' ${tsv_file} ${abundances_file} > ${sampleid}_gene_quantification.txt
