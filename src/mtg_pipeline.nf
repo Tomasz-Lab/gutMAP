@@ -2,8 +2,8 @@
 nextflow.enable.dsl=2
 
 // --- Pipeline Parameters ---
-params.input = "src/sample_mini.csv"
-params.outdir = "results"
+params.input = "/net/afscra/people/plgpkica/metagenome_proj/src/sample_mini.csv"
+params.outdir = "/net/afscra/people/plgpkica/metagenome_proj/results"
 params.skip_sra_download = false
 params.bowtie2_hg38_index = "/net/afscra/people/plgpkica/metagenome_proj/databases/hg38_reference/hg38"
 params.sylph_db = "/net/afscra/people/plgpkica/metagenome_proj/databases/gtdb-r226-c200-dbv1.syldb"
@@ -83,6 +83,8 @@ workflow {
     MAP_FOR_BINNING(ch_input_for_mapping)
     METABAT2_BINNING(MAP_FOR_BINNING.out.bam)
     CHECKM_QA(METABAT2_BINNING.out.bins)
+    joined_for_annotation = METABAT2_BINNING.out.bins.join(CHECKM_QA.out.summary)
+    FILTER_AND_ANNOTATE(joined_for_annotation)
     // =======================================================
 
     // --- FINAL STEP: Collect all specified results into one directory ---
@@ -209,7 +211,6 @@ process BAKTA_ANNOTATION {
     tag "Bakta: $sample_id"
     publishDir "$params.outdir/branch2_annotation/$sample_id", mode: 'symlink'
     conda "bakta=1.9.0 ncbi-amrfinderplus" // bakta is updated to 1.11.x
-    cpus = 10
 
     input:
         tuple val(sample_id), path(contigs_fa)
@@ -277,10 +278,10 @@ process ALIGN_AND_QUANTIFY_READS {
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     input:
-    tuple val(meta), path(reads), path(index_files)
+        tuple val(meta), path(reads), path(index_files)
 
     output:
-    tuple val(meta), path("${meta.id}.idxstats.txt"), emit: idxstats
+        tuple val(meta), path("${meta.id}.idxstats.txt"), emit: idxstats
 
     script:
     def sampleid = meta.id
@@ -444,7 +445,7 @@ process FILTER_HQ_MAGS {
 
 process COLLECT_RESULTS {
     tag "Collecting all results"
-    publishDir "${params.outdir}/collected", mode: 'copy'
+    publishDir "${params.outdir}/collected", mode: 'move'
 
     input:
         path fastp_html_reports
@@ -492,4 +493,102 @@ process COLLECT_RESULTS {
 
     echo "All results collected successfully!"
     """
+}
+
+process FILTER_AND_ANNOTATE {
+    tag "Filter & Annotate GTDB-Tk: $sample_id"
+    conda "/net/afscra/people/plgpkica/metagenome_proj/conda/gtdbtk_and_pandas"
+
+    input:
+        tuple val(sample_id), path(bins_dir), path(checkm_summary)
+
+    output:
+        tuple val(sample_id), path("${sample_id}_gtdbtk_out"), emit: gtdbtk_results
+
+    script:
+    def min_completeness = 90
+    def max_contamination = 5
+    """
+    mkdir hq_bins -p
+
+    # Use a here-document to create a python filtering script on-the-fly
+    cat << EOF > filter_bins.py
+    #!/usr/bin/env python
+    import pandas as pd
+    import os
+    import shutil
+    import sys
+    import ast
+
+    checkm_file = sys.argv[1]
+    bins_dir = sys.argv[2]
+    out_dir = sys.argv[3]
+    completeness = float(sys.argv[4])
+    contamination = float(sys.argv[5])
+
+    # This list will hold the parsed data from each line
+    parsed_data = []
+
+    # Open and read the file line by line
+    with open(checkm_file, 'r') as f:
+        for line in f:
+            # Skip any empty lines
+            if not line.strip():
+                continue
+
+            # Split the line into two parts at the first whitespace
+            # Part 1: bin_name (e.g., 'bin.15')
+            # Part 2: dict_string (e.g., "{'marker lineage': ...}")
+            try:
+                bin_name, dict_string = line.strip().split(None, 1)
+
+                # Safely evaluate the string to convert it into a Python dictionary
+                data_dict = ast.literal_eval(dict_string)
+
+                # Add the bin name to the dictionary
+                data_dict['Bin Id'] = bin_name
+
+                # Add the complete dictionary to our list
+                parsed_data.append(data_dict)
+
+            except (ValueError, SyntaxError) as e:
+                print(f"Skipping malformed line: {line.strip()} - Error: {e}")
+
+    # Create the DataFrame from the list of dictionaries
+    df = pd.DataFrame(parsed_data)
+
+    # Filter the DataFrame
+    hq_df = df[(df['Completeness'] >= completeness) & (df['Contamination'] <= contamination)]
+
+    hq_bin_ids = hq_df['Bin Id'].tolist()
+
+    # Copy the corresponding FASTA files
+    for bin_id in hq_bin_ids:
+            source_path = os.path.join(bins_dir, f"{bin_id}.fa")
+            dest_path = os.path.join(out_dir, f"{bin_id}.fa")
+            if os.path.exists(source_path):
+                shutil.copy(source_path, dest_path)
+    EOF
+
+    # Step 1: Execute the python script to populate the hq_bins directory
+    python filter_bins.py \\
+        "${checkm_summary}" \\
+        "${bins_dir}" \\
+        "hq_bins" \\
+        "${min_completeness}" \\
+        "${max_contamination}"
+    # Step 2: Run GTDB-Tk, but only if high-quality bins were actually found
+    if [ -n "\$(find hq_bins -name '*.fa')" ]; then
+        gtdbtk classify \\
+        --genome_dir hq_bins \\
+        --align_dir hq_align \\
+        --out_dir ${sample_id}_gtdbtk_out \\
+        --extension fa \\
+        --cpus ${task.cpus}
+    else
+        mkdir ${sample_id}_gtdbtk_out
+        touch ${sample_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
+    fi
+    """
+
 }
