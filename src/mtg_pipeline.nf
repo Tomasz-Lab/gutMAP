@@ -391,20 +391,19 @@ process METABAT2_BINNING {
 process CHECKM_QA {
     tag "CheckM: $sample_id"
     publishDir "$params.outdir/branch3_mags/03_checkm_qa/$sample_id", mode: 'symlink'
-    conda "/net/afscra/people/plgpkica/metagenome_proj/checkm_env"
+    conda "checkm2"
 
     input:
         tuple val(sample_id), path(bins_dir)
 
     output:
-        tuple val(sample_id), path("${sample_id}_checkm_out"), emit: checkm_dir
-        tuple val(sample_id), path("${sample_id}_checkm_out/storage/bin_stats_ext.tsv"), emit: summary
+        tuple val(sample_id), path("${sample_id}_checkm2_out"), emit: checkm_dir
+        tuple val(sample_id), path("${sample_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv"), emit: summary
 
 
     script:
     """
-    checkm data setRoot /net/afscra/people/plgpkica/metagenome_proj/checkm_env/checkm_data
-    checkm lineage_wf -x fa -t ${task.cpus} ${bins_dir} ${sample_id}_checkm_out
+    checkm2 predict --input ${bins_dir} --output-directory ${sample_id}_checkm2_out --threads ${task.cpus} -x fa
     """
 }
 
