@@ -89,7 +89,7 @@ workflow {
 
 process ENA_DOWNLOAD {
     tag "ENA Download: $sample_id"
-    publishDir "$params.outdir/01_raw_reads/$sample_id", mode: 'symlink', pattern: "*.fastq.gz"
+    publishDir "$params.outdir/published/01_raw_reads/$sample_id", mode: 'symlink', pattern: "*.fastq.gz"
     memory '5.GB'
     cpus 2
 
@@ -117,7 +117,7 @@ process ENA_DOWNLOAD {
 
 process FASTP_QC {
     tag "fastp: $sample_id"
-    publishDir "$params.outdir/02_fastp_qc/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/02_fastp_qc/$sample_id", mode: 'symlink'
     conda "fastp"
 
     input:
@@ -137,7 +137,7 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sample_id"
-    publishDir "$params.outdir/03_non_human_reads/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/03_non_human_reads/$sample_id", mode: 'symlink'
     conda "bowtie2"
 
     input:
@@ -155,7 +155,7 @@ process REMOVE_HUMAN_READS {
 
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sample_id"
-    publishDir "$params.outdir/shared_assembly/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/04_shared_assembly/$sample_id", mode: 'symlink'
     conda "megahit"
     memory '32.GB'
 
@@ -174,7 +174,7 @@ process MEGAHIT_ASSEMBLY {
 
 process SYLPH_TAXONOMY {
     tag "Sylph: $sample_id"
-    publishDir "$params.outdir/branch1_taxonomy/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/b1_taxonomy/$sample_id", mode: 'symlink'
     conda "sylph"
 
     input:
@@ -192,7 +192,7 @@ process SYLPH_TAXONOMY {
 
 process BAKTA_ANNOTATION {
     tag "Bakta: $sample_id"
-    publishDir "$params.outdir/branch2_annotation/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/b2_annotation/$sample_id", mode: 'symlink'
     conda "bakta=1.9.0 ncbi-amrfinderplus" // bakta is updated to 1.11.x
 
     input:
@@ -237,6 +237,7 @@ process BAKTA_ANNOTATION {
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
+    publishDir "$params.outdir/published/b2_gene_catalog/${meta.id}", mode: 'symlink'
 
     input:
         tuple val(meta), path(reads), path(ffn), path(tsv)
@@ -259,6 +260,7 @@ process CREATE_CATALOG_AND_INDEX {
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
+    publishDir "$params.outdir/published/b2_gene_quantification/${meta.id}", mode: 'symlink'
 
     input:
         tuple val(meta), path(reads), path(index_files)
@@ -339,7 +341,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: $sample_id"
-    publishDir "$params.outdir/branch3_mags/01_mapping/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/b3_mags/01_mapping/$sample_id", mode: 'symlink'
     conda "bowtie2 samtools"
 
     input:
@@ -368,7 +370,7 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sample_id"
-    publishDir "$params.outdir/branch3_mags/02_binning/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/b3_mags/02_binning/$sample_id", mode: 'symlink'
     conda "metabat2"
 
     input:
@@ -388,7 +390,7 @@ process METABAT2_BINNING {
 
 process CHECKM_QA {
     tag "CheckM: $sample_id"
-    publishDir "$params.outdir/branch3_mags/03_checkm_qa/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/b3_mags/03_checkm_qa/$sample_id", mode: 'symlink'
     conda "checkm2"
 
     input:
@@ -407,7 +409,7 @@ process CHECKM_QA {
 
 process FILTER_HQ_MAGS {
     tag "Filter HQ MAGs"
-    publishDir "$params.outdir/branch3_mags/04_high_quality_mags", mode: 'symlink'
+    publishDir "$params.outdir/published/b3_mags/04_high_quality_mags", mode: 'symlink'
 
     input:
         path checkm_summaries
