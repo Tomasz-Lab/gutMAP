@@ -1,21 +1,10 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-// --- Pipeline Parameters ---
-params.input = "/net/afscra/people/plgpkica/metagenome_proj/src/sample_mini.csv"
-params.outdir = "/net/afscra/people/plgpkica/metagenome_proj/results"
-params.skip_sra_download = false
-params.bowtie2_hg38_index = "/net/afscra/people/plgpkica/metagenome_proj/databases/hg38_reference/hg38"
-params.sylph_db = "/net/afscra/people/plgpkica/metagenome_proj/databases/gtdb-r226-c200-dbv1.syldb"
-params.bakta_db = "/net/afscra/people/plgpkica/metagenome_proj/databases/db_v6/db"
-
 log.info """
          M E T A G E N O M I C S - P I P E L I N E
          =========================================
-         Input          : ${params.input}
-         Output         : ${params.outdir}
          """
-         .stripIndent()
 
 // --- Input Channel ---
 Channel
