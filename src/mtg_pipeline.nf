@@ -18,12 +18,8 @@ Channel
 
 workflow {
     // --- 1. Get Reads ---
-    if (!params.skip_sra_download) {
-        ENA_DOWNLOAD(ch_samples)
-        ch_raw_reads = ENA_DOWNLOAD.out.reads
-    } else {
-        ch_raw_reads = Channel.fromFilePairs( 'fastq/*_{1,2}.fastq.gz', checkIfExists: true )
-    }
+    ENA_DOWNLOAD(ch_samples)
+    ch_raw_reads = ENA_DOWNLOAD.out.reads
 
     // --- 2. Quality Control & Decontamination ---
     FASTP_QC(ch_raw_reads)
