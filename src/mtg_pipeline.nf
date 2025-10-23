@@ -6,7 +6,6 @@ log.info """
          =========================================
          """
 
-// --- Input Channel ---
 Channel
     .fromPath(params.input)
     .splitCsv(header:true)
@@ -107,7 +106,6 @@ process ENA_DOWNLOAD {
 
     urls=\$(curl -s "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${sra_id}&result=read_run&fields=fastq_ftp&format=tsv" | tail -n +2 | cut -f2 | tr ';' '\n' | sed 's|^|ftp://|')
 
-    # Download both files with aria2 using multiple connections
     for url in \$urls; do
         echo "Downloading \$url ..."
         wget -c "\$url" -O "\$(basename \$url)" &
@@ -155,24 +153,6 @@ process REMOVE_HUMAN_READS {
     """
 }
 
-process SYLPH_TAXONOMY {
-    tag "Sylph: $sample_id"
-    publishDir "$params.outdir/branch1_taxonomy/$sample_id", mode: 'symlink'
-    conda "sylph"
-
-    input:
-        tuple val(sample_id), path(reads)
-
-    output:
-        path "${sample_id}.sylph_profile.tsv"
-
-    script:
-    def (r1, r2) = reads
-    """
-    sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sample_id}.sylph_profile.tsv -p ${task.cpus}
-    """
-}
-
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sample_id"
     publishDir "$params.outdir/shared_assembly/$sample_id", mode: 'symlink'
@@ -189,6 +169,24 @@ process MEGAHIT_ASSEMBLY {
     def (r1, r2) = reads
     """
     megahit -1 ${r1} -2 ${r2} -o ${sample_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+    """
+}
+
+process SYLPH_TAXONOMY {
+    tag "Sylph: $sample_id"
+    publishDir "$params.outdir/branch1_taxonomy/$sample_id", mode: 'symlink'
+    conda "sylph"
+
+    input:
+        tuple val(sample_id), path(reads)
+
+    output:
+        path "${sample_id}.sylph_profile.tsv"
+
+    script:
+    def (r1, r2) = reads
+    """
+    sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sample_id}.sylph_profile.tsv -p ${task.cpus}
     """
 }
 
@@ -427,58 +425,6 @@ process FILTER_HQ_MAGS {
     """
 }
 
-process COLLECT_RESULTS {
-    tag "Collecting all results"
-    publishDir "${params.outdir}/collected", mode: 'move'
-
-    input:
-        path fastp_html_reports
-        path fastp_json_reports
-        path sylph_profiles
-        path megahit_assemblies
-        path bakta_annotation_dirs
-        path metabat_bin_dirs
-        path checkm_output_dirs
-
-    output:
-        path "qc_reports"
-        path "taxonomy_profiles"
-        path "assemblies"
-        path "annotation"
-        path "mags_and_quality"
-
-    script:
-    """
-    mkdir -p qc_reports
-    mkdir -p taxonomy_profiles
-    mkdir -p assemblies
-    mkdir -p annotation
-    mkdir -p mags_and_quality/raw_bins
-    mkdir -p mags_and_quality/checkm_output
-
-    echo "Collecting FASTP QC reports..."
-    cp ${fastp_html_reports.join(' ')} qc_reports/
-    cp ${fastp_json_reports.join(' ')} qc_reports/
-
-    echo "Collecting SYLPH taxonomy profiles..."
-    cp ${sylph_profiles.join(' ')} taxonomy_profiles/
-
-    echo "Collecting MEGAHIT assemblies..."
-    cp -r ${megahit_assemblies.join(' ')} assemblies/
-
-    echo "Collecting Bakta annotations..."
-    cp -r ${bakta_annotation_dirs.join(' ')} annotation/
-
-    echo "Collecting MetaBAT2 raw bins..."
-    cp -r ${metabat_bin_dirs.join(' ')} mags_and_quality/raw_bins/
-
-    echo "Collecting CheckM output directories..."
-    cp -r ${checkm_output_dirs.join(' ')} mags_and_quality/checkm_output/
-
-    echo "All results collected successfully!"
-    """
-}
-
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sample_id"
     conda "/net/afscra/people/plgpkica/metagenome_proj/conda/gtdbtk_and_pandas"
@@ -574,5 +520,56 @@ process FILTER_AND_ANNOTATE {
         touch ${sample_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
     fi
     """
+}
 
+process COLLECT_RESULTS {
+    tag "Collecting all results"
+    publishDir "${params.outdir}/collected", mode: 'move'
+
+    input:
+        path fastp_html_reports
+        path fastp_json_reports
+        path sylph_profiles
+        path megahit_assemblies
+        path bakta_annotation_dirs
+        path metabat_bin_dirs
+        path checkm_output_dirs
+
+    output:
+        path "qc_reports"
+        path "taxonomy_profiles"
+        path "assemblies"
+        path "annotation"
+        path "mags_and_quality"
+
+    script:
+    """
+    mkdir -p qc_reports
+    mkdir -p taxonomy_profiles
+    mkdir -p assemblies
+    mkdir -p annotation
+    mkdir -p mags_and_quality/raw_bins
+    mkdir -p mags_and_quality/checkm_output
+
+    echo "Collecting FASTP QC reports..."
+    cp ${fastp_html_reports.join(' ')} qc_reports/
+    cp ${fastp_json_reports.join(' ')} qc_reports/
+
+    echo "Collecting SYLPH taxonomy profiles..."
+    cp ${sylph_profiles.join(' ')} taxonomy_profiles/
+
+    echo "Collecting MEGAHIT assemblies..."
+    cp -r ${megahit_assemblies.join(' ')} assemblies/
+
+    echo "Collecting Bakta annotations..."
+    cp -r ${bakta_annotation_dirs.join(' ')} annotation/
+
+    echo "Collecting MetaBAT2 raw bins..."
+    cp -r ${metabat_bin_dirs.join(' ')} mags_and_quality/raw_bins/
+
+    echo "Collecting CheckM output directories..."
+    cp -r ${checkm_output_dirs.join(' ')} mags_and_quality/checkm_output/
+
+    echo "All results collected successfully!"
+    """
 }
