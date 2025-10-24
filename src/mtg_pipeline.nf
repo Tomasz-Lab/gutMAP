@@ -165,7 +165,7 @@ process MEGAHIT_ASSEMBLY {
 
 process SYLPH_TAXONOMY {
     tag "Sylph: $sample_id"
-    publishDir "$params.outdir/published/b1_taxonomy/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sample_id", mode: 'symlink'
     conda "sylph"
 
     input:
@@ -186,7 +186,7 @@ process SYLPH_TAXONOMY {
 
 process BAKTA_ANNOTATION {
     tag "Bakta: $sample_id"
-    publishDir "$params.outdir/published/b2_annotation/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/01_annotation/$sample_id", mode: 'symlink'
     conda "bakta ncbi-amrfinderplus"
 
     input:
@@ -230,7 +230,7 @@ process BAKTA_ANNOTATION {
 
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
-    publishDir "$params.outdir/published/b2_gene_catalog/${meta.id}", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'symlink'
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     input:
@@ -253,7 +253,7 @@ process CREATE_CATALOG_AND_INDEX {
 
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
-    publishDir "$params.outdir/published/b2_gene_quantification/${meta.id}", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'symlink'
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     input:
@@ -281,6 +281,7 @@ process ALIGN_AND_QUANTIFY_READS {
 
 process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${meta.id}"
+    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'symlink'
 
     input:
         tuple val(meta), path(idxstats), path(tsv_file)
@@ -335,7 +336,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: $sample_id"
-    publishDir "$params.outdir/published/b3_mags/01_mapping/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_3/01_mapping/$sample_id", mode: 'symlink'
     conda "bowtie2 samtools"
 
     input:
@@ -364,7 +365,7 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sample_id"
-    publishDir "$params.outdir/published/b3_mags/02_binning/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_3/02_binning/$sample_id", mode: 'symlink'
     conda "metabat2"
 
     input:
@@ -384,7 +385,7 @@ process METABAT2_BINNING {
 
 process CHECKM_QA {
     tag "CheckM: $sample_id"
-    publishDir "$params.outdir/published/b3_mags/03_checkm_qa/$sample_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sample_id", mode: 'symlink'
     conda "checkm2"
 
     input:
@@ -403,6 +404,7 @@ process CHECKM_QA {
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sample_id"
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sample_id", mode: 'symlink'
     conda "python=3.12 gtdbtk pandas"
 
     input:
