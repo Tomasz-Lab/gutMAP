@@ -69,18 +69,6 @@ workflow {
     CHECKM_QA(METABAT2_BINNING.out.bins)
     joined_for_annotation = METABAT2_BINNING.out.bins.join(CHECKM_QA.out.checkm_summary)
     FILTER_AND_ANNOTATE(joined_for_annotation)
-    // =======================================================
-
-    // --- FINAL STEP: Collect all specified results into one directory ---
-    COLLECT_RESULTS(
-        FASTP_QC.out.html_report.collect(),
-        FASTP_QC.out.json_report.collect(),
-        SYLPH_TAXONOMY.out.collect(),
-        MEGAHIT_ASSEMBLY.out.assembly.map{ it[1] }.collect(),
-        BAKTA_ANNOTATION.out.annotation_dir.map{ it[1] }.collect(),
-        METABAT2_BINNING.out.bins.map{ it[1] }.collect(),
-        CHECKM_QA.out.checkm_dir.map{ it[1] }.collect()
-    )
 }
 
 // ========================================================================================
@@ -172,6 +160,9 @@ process MEGAHIT_ASSEMBLY {
     """
 }
 
+// =======================================================
+// --- BRANCH 1 PROCESSES ---
+
 process SYLPH_TAXONOMY {
     tag "Sylph: $sample_id"
     publishDir "$params.outdir/published/b1_taxonomy/$sample_id", mode: 'symlink'
@@ -189,6 +180,9 @@ process SYLPH_TAXONOMY {
     sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sample_id}.sylph_profile.tsv -p ${task.cpus}
     """
 }
+
+// =======================================================
+// --- BRANCH 2 PROCESSES ---
 
 process BAKTA_ANNOTATION {
     tag "Bakta: $sample_id"
@@ -236,8 +230,8 @@ process BAKTA_ANNOTATION {
 
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
-    conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
     publishDir "$params.outdir/published/b2_gene_catalog/${meta.id}", mode: 'symlink'
+    conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     input:
         tuple val(meta), path(reads), path(ffn), path(tsv)
@@ -259,8 +253,8 @@ process CREATE_CATALOG_AND_INDEX {
 
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
-    conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
     publishDir "$params.outdir/published/b2_gene_quantification/${meta.id}", mode: 'symlink'
+    conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     input:
         tuple val(meta), path(reads), path(index_files)
@@ -499,57 +493,5 @@ process FILTER_AND_ANNOTATE {
         mkdir ${sample_id}_gtdbtk_out
         touch ${sample_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
     fi
-    """
-}
-
-process COLLECT_RESULTS {
-    tag "Collecting all results"
-    publishDir "${params.outdir}/collected", mode: 'move'
-
-    input:
-        path fastp_html_reports
-        path fastp_json_reports
-        path sylph_profiles
-        path megahit_assemblies
-        path bakta_annotation_dirs
-        path metabat_bin_dirs
-        path checkm_output_dirs
-
-    output:
-        path "qc_reports" // html reports
-        path "taxonomy_profiles" // sylph output profiles
-        path "assemblies" // megahit contigs
-        path "annotation" // full bakta output, gene quantification output
-        path "mags_and_quality" // hq mags fasta files, gtdbtk classifications
-
-    script:
-    """
-    mkdir -p qc_reports
-    mkdir -p taxonomy_profiles
-    mkdir -p assemblies
-    mkdir -p annotation
-    mkdir -p mags_and_quality/raw_bins
-    mkdir -p mags_and_quality/checkm_output
-
-    echo "Collecting FASTP QC reports..."
-    cp ${fastp_html_reports.join(' ')} qc_reports/
-    cp ${fastp_json_reports.join(' ')} qc_reports/
-
-    echo "Collecting SYLPH taxonomy profiles..."
-    cp ${sylph_profiles.join(' ')} taxonomy_profiles/
-
-    echo "Collecting MEGAHIT assemblies..."
-    cp -r ${megahit_assemblies.join(' ')} assemblies/
-
-    echo "Collecting Bakta annotations..."
-    cp -r ${bakta_annotation_dirs.join(' ')} annotation/
-
-    echo "Collecting MetaBAT2 raw bins..."
-    cp -r ${metabat_bin_dirs.join(' ')} mags_and_quality/raw_bins/
-
-    echo "Collecting CheckM output directories..."
-    cp -r ${checkm_output_dirs.join(' ')} mags_and_quality/checkm_output/
-
-    echo "All results collected successfully!"
     """
 }
