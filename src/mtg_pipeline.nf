@@ -392,7 +392,7 @@ process CHECKM_QA {
 
     output:
         tuple val(sample_id), path("${sample_id}_checkm2_out"), emit: checkm_dir
-        tuple val(sample_id), path("${sample_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv"), emit: checkm_summary
+        tuple val(sample_id), path("${sample_id}_checkm2_out/quality_report.tsv"), emit: checkm_summary
 
 
     script:
@@ -403,7 +403,7 @@ process CHECKM_QA {
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sample_id"
-    conda "gtdbtk pandas"
+    conda "python=3.12 gtdbtk pandas"
 
     input:
         tuple val(sample_id), path(bins_dir), path(checkm_summary)
@@ -415,16 +415,13 @@ process FILTER_AND_ANNOTATE {
     def min_completeness = 90
     def max_contamination = 5
     """
-    mkdir hq_bins -p
-
     # Use a here-document to create a python filtering script on-the-fly
     cat << EOF > filter_bins.py
     #!/usr/bin/env python
     import pandas as pd
     import os
-    import shutil
     import sys
-    import ast
+    import shutil
 
     checkm_file = sys.argv[1]
     bins_dir = sys.argv[2]
@@ -432,48 +429,17 @@ process FILTER_AND_ANNOTATE {
     completeness = float(sys.argv[4])
     contamination = float(sys.argv[5])
 
-    # This list will hold the parsed data from each line
-    parsed_data = []
+    df = pd.read_csv(checkm_file, sep='\t', header=0, index_col=None, on_bad_lines='skip').dropna(subset=['Completeness', 'Contamination'])
 
-    # Open and read the file line by line
-    with open(checkm_file, 'r') as f:
-        for line in f:
-            # Skip any empty lines
-            if not line.strip():
-                continue
-
-            # Split the line into two parts at the first whitespace
-            # Part 1: bin_name (e.g., 'bin.15')
-            # Part 2: dict_string (e.g., "{'marker lineage': ...}")
-            try:
-                bin_name, dict_string = line.strip().split(None, 1)
-
-                # Safely evaluate the string to convert it into a Python dictionary
-                data_dict = ast.literal_eval(dict_string)
-
-                # Add the bin name to the dictionary
-                data_dict['Bin Id'] = bin_name
-
-                # Add the complete dictionary to our list
-                parsed_data.append(data_dict)
-
-            except (ValueError, SyntaxError) as e:
-                print(f"Skipping malformed line: {line.strip()} - Error: {e}")
-
-    # Create the DataFrame from the list of dictionaries
-    df = pd.DataFrame(parsed_data)
-
-    # Filter the DataFrame
     hq_df = df[(df['Completeness'] >= completeness) & (df['Contamination'] <= contamination)]
+    hq_bin_ids = hq_df['Name'].tolist()
 
-    hq_bin_ids = hq_df['Bin Id'].tolist()
-
-    # Copy the corresponding FASTA files
+    os.makedirs(out_dir, exist_ok=True)
     for bin_id in hq_bin_ids:
-            source_path = os.path.join(bins_dir, f"{bin_id}.fa")
-            dest_path = os.path.join(out_dir, f"{bin_id}.fa")
-            if os.path.exists(source_path):
-                shutil.copy(source_path, dest_path)
+        source_path = os.path.join(bins_dir, f"{bin_id}.fa")
+        dest_path = os.path.join(out_dir, f"{bin_id}.fa")
+        if os.path.exists(source_path):
+            shutil.copy(source_path, dest_path)
     EOF
 
     # Step 1: Execute the python script to populate the hq_bins directory
@@ -488,7 +454,8 @@ process FILTER_AND_ANNOTATE {
         gtdbtk classify_wf \\
         --genome_dir hq_bins \\
         --out_dir ${sample_id}_gtdbtk_out \\
-        --cpus ${task.cpus}
+        --cpus ${task.cpus} \\
+        --extension fa
     else
         mkdir ${sample_id}_gtdbtk_out
         touch ${sample_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
