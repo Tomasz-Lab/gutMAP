@@ -67,7 +67,7 @@ workflow {
     MAP_FOR_BINNING(ch_input_for_mapping)
     METABAT2_BINNING(MAP_FOR_BINNING.out.bam)
     CHECKM_QA(METABAT2_BINNING.out.bins)
-    joined_for_annotation = METABAT2_BINNING.out.bins.join(CHECKM_QA.out.summary)
+    joined_for_annotation = METABAT2_BINNING.out.bins.join(CHECKM_QA.out.checkm_summary)
     FILTER_AND_ANNOTATE(joined_for_annotation)
     // =======================================================
 
@@ -193,7 +193,7 @@ process SYLPH_TAXONOMY {
 process BAKTA_ANNOTATION {
     tag "Bakta: $sample_id"
     publishDir "$params.outdir/published/b2_annotation/$sample_id", mode: 'symlink'
-    conda "bakta=1.9.0 ncbi-amrfinderplus" // bakta is updated to 1.11.x
+    conda "bakta ncbi-amrfinderplus"
 
     input:
         tuple val(sample_id), path(contigs_fa)
@@ -409,7 +409,7 @@ process CHECKM_QA {
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sample_id"
-    conda "/net/afscra/people/plgpkica/metagenome_proj/conda/gtdbtk_and_pandas" // needs gtdb 226 db
+    conda "gtdbtk pandas"
 
     input:
         tuple val(sample_id), path(bins_dir), path(checkm_summary)
