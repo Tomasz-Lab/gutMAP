@@ -30,12 +30,12 @@ workflow {
     ch_assembly = MEGAHIT_ASSEMBLY.out.assembly
 
     // =======================================================
-    // --- BRANCH 1: Taxonomic Annotation with Sylph ---
+    // --- BRANCH 1: Taxonomic Annotation with Sylph, GTDB version 226 ---
     SYLPH_TAXONOMY(ch_non_human_reads)
     // =======================================================
 
     // =======================================================
-    // --- BRANCH 2: Gene Catalog and Abundance ---
+    // --- BRANCH 2: Gene Catalog and Gene Abundance ---
     BAKTA_ANNOTATION(ch_assembly)
 
     // Create a combined channel with the required inputs for catalog creation
@@ -62,7 +62,7 @@ workflow {
     // =======================================================
 
     // =======================================================
-    // --- BRANCH 3: Metagenome-Assembled Genome (MAG) Creation ---
+    // --- BRANCH 3: Metagenome-Assembled Genomes (MAG) Creation ---
     ch_input_for_mapping = ch_non_human_reads.join(ch_assembly)
     MAP_FOR_BINNING(ch_input_for_mapping)
     METABAT2_BINNING(MAP_FOR_BINNING.out.bam)
@@ -398,7 +398,7 @@ process CHECKM_QA {
 
     output:
         tuple val(sample_id), path("${sample_id}_checkm2_out"), emit: checkm_dir
-        tuple val(sample_id), path("${sample_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv"), emit: summary
+        tuple val(sample_id), path("${sample_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv"), emit: checkm_summary
 
 
     script:
@@ -407,29 +407,9 @@ process CHECKM_QA {
     """
 }
 
-process FILTER_HQ_MAGS {
-    tag "Filter HQ MAGs"
-    publishDir "$params.outdir/published/b3_mags/04_high_quality_mags", mode: 'symlink'
-
-    input:
-        path checkm_summaries
-
-    output:
-        path "high_quality_mags.txt"
-
-    script:
-    """
-    echo -e "Bin Id\\tMarker lineage\\t# genomes\\t# markers\\t# marker sets\\t0\\t1\\t2\\t3\\t4\\t5+\\tCompleteness\\tContamination\\tStrain heterogeneity" > combined_summary.tsv
-    for f in ${checkm_summaries.join(' ')}; do
-        tail -n +2 "\$f" >> combined_summary.tsv
-    done
-    awk -F'\\t' 'BEGIN{OFS=FS} { if (\$12 > 90 && \$13 < 5) { print \$1 } }' combined_summary.tsv > high_quality_mags.txt
-    """
-}
-
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sample_id"
-    conda "/net/afscra/people/plgpkica/metagenome_proj/conda/gtdbtk_and_pandas"
+    conda "/net/afscra/people/plgpkica/metagenome_proj/conda/gtdbtk_and_pandas" // needs gtdb 226 db
 
     input:
         tuple val(sample_id), path(bins_dir), path(checkm_summary)
@@ -511,11 +491,9 @@ process FILTER_AND_ANNOTATE {
         "${max_contamination}"
     # Step 2: Run GTDB-Tk, but only if high-quality bins were actually found
     if [ -n "\$(find hq_bins -name '*.fa')" ]; then
-        gtdbtk classify \\
+        gtdbtk classify_wf \\
         --genome_dir hq_bins \\
-        --align_dir hq_align \\
         --out_dir ${sample_id}_gtdbtk_out \\
-        --extension fa \\
         --cpus ${task.cpus}
     else
         mkdir ${sample_id}_gtdbtk_out
@@ -538,11 +516,11 @@ process COLLECT_RESULTS {
         path checkm_output_dirs
 
     output:
-        path "qc_reports"
-        path "taxonomy_profiles"
-        path "assemblies"
-        path "annotation"
-        path "mags_and_quality"
+        path "qc_reports" // html reports
+        path "taxonomy_profiles" // sylph output profiles
+        path "assemblies" // megahit contigs
+        path "annotation" // full bakta output, gene quantification output
+        path "mags_and_quality" // hq mags fasta files, gtdbtk classifications
 
     script:
     """
