@@ -6,11 +6,7 @@ log.info """
          =========================================
          """
 
-Channel
-    .fromPath(params.input)
-    .splitCsv(header:true)
-    .map { row -> tuple(row.sample, row.sra_id) }
-    .set { ch_samples }
+ch_samples = Channel.of(params.input)
 
 // ========================================================================================
 //  WORKFLOW
@@ -42,21 +38,21 @@ workflow {
     ch_for_catalog_creation = ch_non_human_reads
         .join(BAKTA_ANNOTATION.out.nucleotides)
         .join(BAKTA_ANNOTATION.out.tsv)
-        .map { sample_id, reads, ffn, tsv -> [ [id: sample_id], reads, ffn, tsv ] }
+        .map { sra_id, reads, ffn, tsv -> [ [id: sra_id], reads, ffn, tsv ] }
 
     CREATE_CATALOG_AND_INDEX(ch_for_catalog_creation)
 
     // Combine reads with the newly created index for alignment
     ch_for_alignment = ch_non_human_reads
         .combine(CREATE_CATALOG_AND_INDEX.out.index)
-        .map { sample_id, reads, meta, index_files -> [ meta, reads, index_files ] }
+        .map { sra_id, reads, meta, index_files -> [ meta, reads, index_files ] }
 
     ALIGN_AND_QUANTIFY_READS(ch_for_alignment)
 
     // Combine the read counts with the original tsv for final annotation
     ch_for_annotation = ALIGN_AND_QUANTIFY_READS.out.idxstats
         .combine(BAKTA_ANNOTATION.out.tsv)
-        .map { meta, idxstats, sample_id, tsv -> [ meta, idxstats, tsv ] }
+        .map { meta, idxstats, sra_id, tsv -> [ meta, idxstats, tsv ] }
 
     CALCULATE_TPM_AND_ANNOTATE(ch_for_annotation)
     // =======================================================
@@ -76,16 +72,16 @@ workflow {
 // ========================================================================================
 
 process ENA_DOWNLOAD {
-    tag "ENA Download: $sample_id"
-    publishDir "$params.outdir/published/01_raw_reads/$sample_id", mode: 'symlink', pattern: "*.fastq.gz"
+    tag "ENA Download: $sra_id"
+    publishDir "$params.outdir/published/01_raw_reads/$sra_id", mode: 'symlink', pattern: "*.fastq.gz"
     memory '5.GB'
     cpus 2
 
     input:
-        tuple val(sample_id), val(sra_id)
+        val(sra_id)
 
     output:
-        tuple val(sample_id), path("*.fastq.gz"), emit: reads
+        tuple val(sra_id), path("*.fastq.gz"), emit: reads
 
     script:
     """
@@ -104,59 +100,59 @@ process ENA_DOWNLOAD {
 }
 
 process FASTP_QC {
-    tag "fastp: $sample_id"
-    publishDir "$params.outdir/published/02_fastp_qc/$sample_id", mode: 'symlink'
+    tag "fastp: $sra_id"
+    publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'symlink'
     conda "fastp"
 
     input:
-        tuple val(sample_id), path(reads)
+        tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sample_id), path("*.trimmed.fastq.gz"), emit: reads
+        tuple val(sra_id), path("*.trimmed.fastq.gz"), emit: reads
         path "*.html", emit: html_report
         path "*.json", emit: json_report
 
     script:
     def (r1, r2) = reads
     """
-    fastp --in1 ${r1} --in2 ${r2} --out1 ${sample_id}_1.trimmed.fastq.gz --out2 ${sample_id}_2.trimmed.fastq.gz --html ${sample_id}.fastp.html --json ${sample_id}.fastp.json --thread ${task.cpus} --detect_adapter_for_pe
+    fastp --in1 ${r1} --in2 ${r2} --out1 ${sra_id}_1.trimmed.fastq.gz --out2 ${sra_id}_2.trimmed.fastq.gz --html ${sra_id}.fastp.html --json ${sra_id}.fastp.json --thread ${task.cpus} --detect_adapter_for_pe
     """
 }
 
 process REMOVE_HUMAN_READS {
-    tag "Bowtie2 Decontam: $sample_id"
-    publishDir "$params.outdir/published/03_non_human_reads/$sample_id", mode: 'symlink'
+    tag "Bowtie2 Decontam: $sra_id"
+    publishDir "$params.outdir/published/03_non_human_reads/$sra_id", mode: 'symlink'
     conda "bowtie2"
 
     input:
-        tuple val(sample_id), path(reads)
+        tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sample_id), path("${sample_id}.nonhuman.fastq.{1,2}.gz"), emit: reads
+        tuple val(sra_id), path("${sra_id}.nonhuman.fastq.{1,2}.gz"), emit: reads
 
     script:
     def (r1, r2) = reads
     """
-    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local --un-conc-gz ${sample_id}.nonhuman.fastq.gz -S /dev/null
+    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local --un-conc-gz ${sra_id}.nonhuman.fastq.gz -S /dev/null
     """
 }
 
 process MEGAHIT_ASSEMBLY {
-    tag "MEGAHIT: $sample_id"
-    publishDir "$params.outdir/published/04_shared_assembly/$sample_id", mode: 'symlink'
+    tag "MEGAHIT: $sra_id"
+    publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'symlink'
     conda "megahit"
     memory '32.GB'
 
     input:
-        tuple val(sample_id), path(reads)
+        tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sample_id), path("${sample_id}_megahit_out"), emit: assembly
+        tuple val(sra_id), path("${sra_id}_megahit_out"), emit: assembly
 
     script:
     def (r1, r2) = reads
     """
-    megahit -1 ${r1} -2 ${r2} -o ${sample_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+    megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
     """
 }
 
@@ -164,20 +160,20 @@ process MEGAHIT_ASSEMBLY {
 // --- BRANCH 1 PROCESSES ---
 
 process SYLPH_TAXONOMY {
-    tag "Sylph: $sample_id"
-    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sample_id", mode: 'symlink'
+    tag "Sylph: $sra_id"
+    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'symlink'
     conda "sylph"
 
     input:
-        tuple val(sample_id), path(reads)
+        tuple val(sra_id), path(reads)
 
     output:
-        path "${sample_id}.sylph_profile.tsv"
+        path "${sra_id}.sylph_profile.tsv"
 
     script:
     def (r1, r2) = reads
     """
-    sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sample_id}.sylph_profile.tsv -p ${task.cpus}
+    sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
     """
 }
 
@@ -185,18 +181,18 @@ process SYLPH_TAXONOMY {
 // --- BRANCH 2 PROCESSES ---
 
 process BAKTA_ANNOTATION {
-    tag "Bakta: $sample_id"
-    publishDir "$params.outdir/published/branch_2/01_annotation/$sample_id", mode: 'symlink'
+    tag "Bakta: $sra_id"
+    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'symlink'
     conda "bakta ncbi-amrfinderplus"
 
     input:
-        tuple val(sample_id), path(contigs_fa)
+        tuple val(sra_id), path(contigs_fa)
 
     output:
-        tuple val(sample_id), path("${sample_id}.bakta/*.faa"), emit: proteins
-        tuple val(sample_id), path("${sample_id}.bakta/*.ffn"), emit: nucleotides
-        tuple val(sample_id), path("${sample_id}.bakta/*.tsv"), emit: tsv
-        tuple val(sample_id), path("${sample_id}.bakta"), emit: annotation_dir
+        tuple val(sra_id), path("${sra_id}.bakta/*.faa"), emit: proteins
+        tuple val(sra_id), path("${sra_id}.bakta/*.ffn"), emit: nucleotides
+        tuple val(sra_id), path("${sra_id}.bakta/*.tsv"), emit: tsv
+        tuple val(sra_id), path("${sra_id}.bakta"), emit: annotation_dir
 
     script:
     """
@@ -206,8 +202,8 @@ process BAKTA_ANNOTATION {
 
     bakta \
     --db \$MEMFS_DB \
-    --output ${sample_id}.bakta \
-    --prefix ${sample_id} \
+    --output ${sra_id}.bakta \
+    --prefix ${sra_id} \
     --threads ${task.cpus} \
     --debug \
     --verbose \
@@ -335,83 +331,83 @@ process CALCULATE_TPM_AND_ANNOTATE {
 // --- BRANCH 3 PROCESSES ---
 
 process MAP_FOR_BINNING {
-    tag "Map for Binning: $sample_id"
-    publishDir "$params.outdir/published/branch_3/01_mapping/$sample_id", mode: 'symlink'
+    tag "Map for Binning: $sra_id"
+    publishDir "$params.outdir/published/branch_3/01_mapping/$sra_id", mode: 'symlink'
     conda "bowtie2 samtools"
 
     input:
-        tuple val(sample_id), path(reads), path(megahit_dir)
+        tuple val(sra_id), path(reads), path(megahit_dir)
 
     output:
-        tuple val(sample_id), path("${sample_id}.sorted.bam"), path(megahit_dir), emit: bam
+        tuple val(sra_id), path("${sra_id}.sorted.bam"), path(megahit_dir), emit: bam
 
 
     script:
     def (r1, r2) = reads
     def contigs = "${megahit_dir}/final.contigs.fa"
     """
-    bowtie2-build ${contigs} ${sample_id}.assembly.idx
+    bowtie2-build ${contigs} ${sra_id}.assembly.idx
     bowtie2 \\
-        -x ${sample_id}.assembly.idx \\
+        -x ${sra_id}.assembly.idx \\
         -1 ${r1} \\
         -2 ${r2} \\
         --threads ${task.cpus} \\
         -S temp.sam
 
-    samtools view -bS -F 4 temp.sam | samtools sort - > ${sample_id}.sorted.bam
+    samtools view -bS -F 4 temp.sam | samtools sort - > ${sra_id}.sorted.bam
     rm temp.sam
     """
 }
 
 process METABAT2_BINNING {
-    tag "MetaBAT2 Binning: $sample_id"
-    publishDir "$params.outdir/published/branch_3/02_binning/$sample_id", mode: 'symlink'
+    tag "MetaBAT2 Binning: $sra_id"
+    publishDir "$params.outdir/published/branch_3/02_binning/$sra_id", mode: 'symlink'
     conda "metabat2"
 
     input:
-        tuple val(sample_id), path(bam), path(megahit_dir)
+        tuple val(sra_id), path(bam), path(megahit_dir)
 
     output:
-        tuple val(sample_id), path("${sample_id}_bins"), emit: bins
+        tuple val(sra_id), path("${sra_id}_bins"), emit: bins
 
     script:
     def contigs = "${megahit_dir}/final.contigs.fa"
     """
-    jgi_summarize_bam_contig_depths --outputDepth ${sample_id}.depth.txt ${bam}
-    mkdir -p ${sample_id}_bins
-    metabat2 -i ${contigs} -a ${sample_id}.depth.txt -o ${sample_id}_bins/bin -t ${task.cpus} -m 1500 -v
+    jgi_summarize_bam_contig_depths --outputDepth ${sra_id}.depth.txt ${bam}
+    mkdir -p ${sra_id}_bins
+    metabat2 -i ${contigs} -a ${sra_id}.depth.txt -o ${sra_id}_bins/bin -t ${task.cpus} -m 1500 -v
     """
 }
 
 process CHECKM_QA {
-    tag "CheckM: $sample_id"
-    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sample_id", mode: 'symlink'
+    tag "CheckM: $sra_id"
+    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'symlink'
     conda "checkm2"
 
     input:
-        tuple val(sample_id), path(bins_dir)
+        tuple val(sra_id), path(bins_dir)
 
     output:
-        tuple val(sample_id), path("${sample_id}_checkm2_out"), emit: checkm_dir
-        tuple val(sample_id), path("${sample_id}_checkm2_out/quality_report.tsv"), emit: checkm_summary
+        tuple val(sra_id), path("${sra_id}_checkm2_out"), emit: checkm_dir
+        tuple val(sra_id), path("${sra_id}_checkm2_out/quality_report.tsv"), emit: checkm_summary
 
 
     script:
     """
-    checkm2 predict --input ${bins_dir} --output-directory ${sample_id}_checkm2_out --threads ${task.cpus} -x fa
+    checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
     """
 }
 
 process FILTER_AND_ANNOTATE {
-    tag "Filter & Annotate GTDB-Tk: $sample_id"
-    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sample_id", mode: 'symlink'
+    tag "Filter & Annotate GTDB-Tk: $sra_id"
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'symlink'
     conda "python=3.12 gtdbtk pandas"
 
     input:
-        tuple val(sample_id), path(bins_dir), path(checkm_summary)
+        tuple val(sra_id), path(bins_dir), path(checkm_summary)
 
     output:
-        tuple val(sample_id), path("${sample_id}_gtdbtk_out"), emit: gtdbtk_results
+        tuple val(sra_id), path("${sra_id}_gtdbtk_out"), emit: gtdbtk_results
 
     script:
     def min_completeness = 90
@@ -455,12 +451,12 @@ process FILTER_AND_ANNOTATE {
     if [ -n "\$(find hq_bins -name '*.fa')" ]; then
         gtdbtk classify_wf \\
         --genome_dir hq_bins \\
-        --out_dir ${sample_id}_gtdbtk_out \\
+        --out_dir ${sra_id}_gtdbtk_out \\
         --cpus ${task.cpus} \\
         --extension fa
     else
-        mkdir ${sample_id}_gtdbtk_out
-        touch ${sample_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
+        mkdir ${sra_id}_gtdbtk_out
+        touch ${sra_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
     fi
     """
 }
