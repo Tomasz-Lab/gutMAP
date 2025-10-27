@@ -141,7 +141,6 @@ process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sra_id"
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'symlink'
     conda "megahit"
-    memory '32.GB'
 
     input:
         tuple val(sra_id), path(reads)
@@ -266,8 +265,8 @@ process ALIGN_AND_QUANTIFY_READS {
     """
     # Step 3: Align reads to the catalogue and create a sorted BAM file
     bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | \\
-        samtools view -bS -@ ${task.cpus} - | \\
-        samtools sort -@ ${task.cpus} -o ${sorted_bam}
+        samtools view -bS --threads ${task.cpus} - | \\
+        samtools sort --threads ${task.cpus} -o ${sorted_bam}
 
     # Step 4: Index the sorted BAM file and get read counts
     samtools index ${sorted_bam}
@@ -346,15 +345,10 @@ process MAP_FOR_BINNING {
     def (r1, r2) = reads
     def contigs = "${megahit_dir}/final.contigs.fa"
     """
-    bowtie2-build ${contigs} ${sra_id}.assembly.idx
-    bowtie2 \\
-        -x ${sra_id}.assembly.idx \\
-        -1 ${r1} \\
-        -2 ${r2} \\
-        --threads ${task.cpus} \\
-        -S temp.sam
+    bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
+    bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} -S temp.sam
 
-    samtools view -bS -F 4 temp.sam | samtools sort - > ${sra_id}.sorted.bam
+    samtools view -u -bS -F 4 temp.sam | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
     rm temp.sam
     """
 }
