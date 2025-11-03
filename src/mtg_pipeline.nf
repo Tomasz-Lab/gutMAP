@@ -265,8 +265,7 @@ process ALIGN_AND_QUANTIFY_READS {
     """
     # Step 3: Align reads to the catalogue and create a sorted BAM file
     bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | \\
-        samtools view -bS --threads ${task.cpus} - | \\
-        samtools sort --threads ${task.cpus} -o ${sorted_bam}
+        samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
 
     # Step 4: Index the sorted BAM file and get read counts
     samtools index ${sorted_bam}
@@ -348,7 +347,7 @@ process MAP_FOR_BINNING {
     bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
     bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} -S temp.sam
 
-    samtools view -u -bS -F 4 temp.sam | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+    samtools view -u -b -F 4 temp.sam | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
     rm temp.sam
     """
 }
