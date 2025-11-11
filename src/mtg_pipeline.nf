@@ -296,7 +296,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
     with open("${idxstats}", 'r') as f:
         for line in f:
-            parts = line.strip().split('\\t')
+            parts = line.strip().split('\t')
             gene_id, length, mapped_reads, _ = parts
             if gene_id == '*' or int(length) == 0:
                 continue
@@ -311,17 +311,20 @@ process CALCULATE_TPM_AND_ANNOTATE {
     scaling_factor = rpk_sum / 1_000_000.0 if rpk_sum > 0 else 0
 
     with open("${abundances_file}", 'w') as out_file:
-        out_file.write("gene_id\\tlength\\tread_count\\ttpm\\n")
+        out_file.write("gene_id\tlength\tread_count\ttpm\n")
         for gene_id in gene_lengths:
             length = gene_lengths[gene_id]
             reads = read_counts[gene_id]
             rpk = reads / (length / 1000.0)
             tpm = rpk / scaling_factor if scaling_factor > 0 else 0
-            out_file.write(f"{gene_id}\\t{length}\\t{reads}\\t{tpm}\\n")
+            out_file.write(f"{gene_id}\t{length}\t{reads}\t{tpm}\n")
     EOF
 
-    # Join TPM values with gene descriptions
-    awk 'BEGIN{FS=OFS="\\t"} FNR==NR{if(FNR>1)desc[\$6]=\$8; next} {if(FNR==1)print "gene_id","description","tpm"; else print \$1,desc[\$1],\$4}' ${tsv_file} ${abundances_file} > ${sampleid}_gene_quantification.txt
+    awk '{gsub("\r",""); print}' ${abundances_file} > abundance_clean.tsv 
+    awk '{gsub("\r",""); print}' ${tsv_file} > annotation_clean.tsv 
+
+    awk 'NR==FNR{ if (FNR>1) a[$1]=$0; next } FNR==1 {print "Sequence_Id\tType\tStart\tStop\tStrand\tLocus_Tag\tGene\tProduct\tDbXrefs\tlength\tread_count\ttpm"; next}($6 in a) {print $0 "\t" a[$6]}' abundance_clean.tsv annotation_clean.tsv > ${sampleid}_gene_quantification.txt
+
     """
 }
 
