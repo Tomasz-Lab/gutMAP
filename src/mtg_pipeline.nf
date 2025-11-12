@@ -74,8 +74,6 @@ workflow {
 process ENA_DOWNLOAD {
     tag "ENA Download: $sra_id"
     publishDir "$params.outdir/published/01_raw_reads/$sra_id", mode: 'symlink', pattern: "*.fastq.gz"
-    memory '5.GB'
-    cpus 2
 
     input:
         val(sra_id)
@@ -108,14 +106,15 @@ process FASTP_QC {
         tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sra_id), path("*.trimmed.fastq.gz"), emit: reads
+        tuple val(sra_id), path("*.trimmed.fastq"), emit: reads
         path "*.html", emit: html_report
         path "*.json", emit: json_report
 
     script:
     def (r1, r2) = reads
     """
-    fastp --in1 ${r1} --in2 ${r2} --out1 ${sra_id}_1.trimmed.fastq.gz --out2 ${sra_id}_2.trimmed.fastq.gz --html ${sra_id}.fastp.html --json ${sra_id}.fastp.json --thread ${task.cpus} --detect_adapter_for_pe
+    fastp --in1 ${r1} --in2 ${r2} --out1 ${sra_id}_1.trimmed.fastq --out2 ${sra_id}_2.trimmed.fastq \\
+        --html ${sra_id}.fastp.html --json ${sra_id}.fastp.json --thread ${task.cpus} --detect_adapter_for_pe
     """
 }
 
@@ -128,12 +127,13 @@ process REMOVE_HUMAN_READS {
         tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sra_id), path("${sra_id}.nonhuman.fastq.{1,2}.gz"), emit: reads
+        tuple val(sra_id), path("${sra_id}.nonhuman.{1,2}.fastq"), emit: reads
 
     script:
     def (r1, r2) = reads
     """
-    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local --un-conc-gz ${sra_id}.nonhuman.fastq.gz -S /dev/null
+    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local \\
+        --un-conc ${sra_id}.nonhuman.fastq -S /dev/null
     """
 }
 
