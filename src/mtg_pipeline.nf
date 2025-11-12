@@ -239,7 +239,7 @@ process CREATE_CATALOG_AND_INDEX {
     def catalog_fna = "${sampleid}_clustered_catalog.fna"
     """
     # Step 1: Cluster at 100%
-    cd-hit-est -i ${ffn} -o ${catalog_fna} -c 1.0 -T ${task.cpus} -d 0
+    cd-hit-est -i ${ffn} -o ${catalog_fna} -c 1.0 -T ${task.cpus} -d 0 -M 0
 
     # Step 2: Index the gene catalogue
     bwa-mem2 index ${catalog_fna}
