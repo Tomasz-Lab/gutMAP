@@ -323,7 +323,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
     awk '{gsub("\r",""); print}' ${abundances_file} > abundance_clean.tsv 
     awk '{gsub("\r",""); print}' ${tsv_file} > annotation_clean.tsv 
 
-    awk 'NR==FNR{ if (FNR>1) a[$1]=$0; next } FNR==1 {print "Sequence_Id\tType\tStart\tStop\tStrand\tLocus_Tag\tGene\tProduct\tDbXrefs\tlength\tread_count\ttpm"; next}($6 in a) {print $0 "\t" a[$6]}' abundance_clean.tsv annotation_clean.tsv > ${sampleid}_gene_quantification.txt
+    awk 'NR==FNR{ if (FNR>1) a[$1]=$0; next } FNR==1 {print "Sequence_Id\tType\tStart\tStop\tStrand\tLocus_Tag\tGene\tProduct\tDbXrefs\tgene_id\tlength\tread_count\ttpm"; next}($6 in a) {print $0 "\t" a[$6]}' abundance_clean.tsv annotation_clean.tsv > ${sampleid}_gene_quantification.txt
 
     """
 }
