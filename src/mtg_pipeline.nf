@@ -265,6 +265,7 @@ process ALIGN_AND_QUANTIFY_READS {
 }
 
 process CALCULATE_TPM_AND_ANNOTATE {
+
     tag "TPM & Annotate for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'symlink'
 
@@ -275,49 +276,84 @@ process CALCULATE_TPM_AND_ANNOTATE {
         tuple val(meta), path("${meta.id}_gene_quantification.tsv"), emit: quantification
 
     script:
-    def sampleid = meta.id
-    def abundances_file = "${sampleid}_gene_abundances.txt"
-    """
-    python3 - <<'EOF'
-    import sys
+        def merged_output = "${meta.id}_gene_quantification.tsv"
 
-    gene_lengths = {}
-    read_counts = {}
-    rpk_sum = 0.0
+        """
+        python3 - <<'EOF'
+        import pandas as pd
+        from io import StringIO
 
-    with open("${idxstats}", 'r') as f:
-        for line in f:
-            parts = line.strip().split('\\t')
-            gene_id, length, mapped_reads, _ = parts
-            if gene_id == '*' or int(length) == 0:
-                continue
+        # -----------------------------
+        # Read idxstats file and compute TPM
+        # -----------------------------
+        gene_lengths = {}
+        read_counts = {}
+        rpk_sum = 0.0
 
-            length = int(length)
-            mapped_reads = int(mapped_reads)
-            gene_lengths[gene_id] = length
-            read_counts[gene_id] = mapped_reads
-            rpk = mapped_reads / (length / 1000.0)
-            rpk_sum += rpk
+        with open("${idxstats}", "r") as f:
+            for line in f:
+                parts = line.strip().split("\\t")
+                gene_id, length, mapped_reads, _ = parts
 
-    scaling_factor = rpk_sum / 1_000_000.0 if rpk_sum > 0 else 0
+                if gene_id == "*" or int(length) == 0:
+                    continue
 
-    with open("${abundances_file}", 'w') as out_file:
-        out_file.write("gene_id\\tlength\\tread_count\\ttpm\\n")
+                length = int(length)
+                mapped_reads = int(mapped_reads)
+
+                gene_lengths[gene_id] = length
+                read_counts[gene_id] = mapped_reads
+
+                rpk = mapped_reads / (length / 1000.0)
+                rpk_sum += rpk
+
+        scaling_factor = rpk_sum / 1_000_000.0 if rpk_sum > 0 else 0
+
+        abundances_data = []
         for gene_id in gene_lengths:
             length = gene_lengths[gene_id]
             reads = read_counts[gene_id]
             rpk = reads / (length / 1000.0)
             tpm = rpk / scaling_factor if scaling_factor > 0 else 0
-            out_file.write(f"{gene_id}\\t{length}\\t{reads}\\t{tpm}\\n")
-    EOF
 
-    awk '{gsub("\\r",""); print}' ${abundances_file} > abundance_clean.tsv
-    awk '{gsub("\\r",""); print}' ${tsv_file} > annotation_clean.tsv
+            abundances_data.append({
+                "gene_id": gene_id,
+                "length": length,
+                "read_count": reads,
+                "tpm": tpm
+            })
 
-    awk 'NR==FNR{ if (FNR>1) a[\$1]=\$0; next } FNR==1 {print "Sequence_Id\\tType\\tStart\\tStop\\tStrand\\tLocus_Tag\\tGene\\tProduct\\tDbXrefs\\tgene_id\\tlength\\tread_count\\ttpm"; next}(\$6 in a) {print \$0 "\\t" a[\$6]}' abundance_clean.tsv annotation_clean.tsv > ${sampleid}_gene_quantification.tsv
+        abundances_df = pd.DataFrame(abundances_data)
 
-    """
+        # -----------------------------
+        # Read annotation TSV
+        # (keep only last '#' line as header)
+        # -----------------------------
+        with open("${tsv_file}", "r") as f:
+            lines = f.readlines()
+
+        header_idx = max(i for i, line in enumerate(lines) if line.startswith("#"))
+        header_line = lines[header_idx].lstrip("#").strip()
+        data_lines = lines[header_idx + 1:]
+
+        tsv_str = header_line + "\\n" + "".join(data_lines)
+        tsv_df = pd.read_csv(StringIO(tsv_str), sep="\\t", skipinitialspace=True)
+
+        # -----------------------------
+        # Merge and write output
+        # -----------------------------
+        merged_df = tsv_df.merge(
+            abundances_df,
+            left_on="Locus Tag",
+            right_on="gene_id",
+            how="inner"
+        )
+
+        merged_df.to_csv("${merged_output}", sep="\\t", index=False)
+        EOF
+        """
 }
+
 
 // =======================================================
 // --- BRANCH 3 PROCESSES ---
