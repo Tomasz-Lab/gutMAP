@@ -73,6 +73,7 @@ workflow {
 
 process ENA_DOWNLOAD {
     tag "ENA Download: $sra_id"
+    conda "kingfisher"
     publishDir "$params.outdir/published/01_raw_reads/$sra_id", mode: 'symlink', pattern: "*.fastq.gz"
 
     input:
@@ -83,17 +84,7 @@ process ENA_DOWNLOAD {
 
     script:
     """
-    #!/bin/bash
-    set -e
-
-    urls=\$(curl -s "https://www.ebi.ac.uk/ena/portal/api/filereport?accession=${sra_id}&result=read_run&fields=fastq_ftp&format=tsv" | tail -n +2 | cut -f2 | tr ';' '\n' | sed 's|^|ftp://|')
-
-    for url in \$urls; do
-        echo "Downloading \$url ..."
-        wget -c "\$url" -O "\$(basename \$url)" &
-    done
-
-    wait
+    kingfisher get -r $sra_id -t ${task.cpus} -f fastq.gz -m ena-ftp prefetch aws-http
     """
 }
 
