@@ -259,8 +259,8 @@ process ALIGN_AND_QUANTIFY_READS {
         samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
 
     # Step 4: Index the sorted BAM file and get read counts
-    samtools index ${sorted_bam}
-    samtools idxstats ${sorted_bam} > ${sampleid}.idxstats.txt
+    samtools index --threads ${task.cpus} ${sorted_bam}
+    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sampleid}.idxstats.txt
     """
 }
 
