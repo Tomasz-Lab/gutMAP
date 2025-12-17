@@ -74,7 +74,6 @@ workflow {
 process ENA_DOWNLOAD {
     tag "ENA Download: $sra_id"
     conda "kingfisher"
-    publishDir "$params.outdir/published/01_raw_reads/$sra_id", mode: 'symlink', pattern: "*.fastq.gz"
 
     input:
         val(sra_id)
@@ -90,7 +89,7 @@ process ENA_DOWNLOAD {
 
 process FASTP_QC {
     tag "fastp: $sra_id"
-    publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'copy', pattern: "*.json"
     conda "fastp"
 
     input:
@@ -111,7 +110,6 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sra_id"
-    publishDir "$params.outdir/published/03_non_human_reads/$sra_id", mode: 'symlink'
     conda "bowtie2"
 
     input:
@@ -130,7 +128,7 @@ process REMOVE_HUMAN_READS {
 
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sra_id"
-    publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'copy', pattern: "final.contigs.fa"
     conda "megahit"
 
     input:
@@ -138,11 +136,13 @@ process MEGAHIT_ASSEMBLY {
 
     output:
         tuple val(sra_id), path("${sra_id}_megahit_out"), emit: assembly
+        path("final.contigs.fa")
 
     script:
     def (r1, r2) = reads
     """
     megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+    cp ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
     """
 }
 
@@ -151,7 +151,7 @@ process MEGAHIT_ASSEMBLY {
 
 process SYLPH_TAXONOMY {
     tag "Sylph: $sra_id"
-    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'copy', pattern: "${sra_id}.sylph_profile.tsv"
     conda "sylph"
 
     input:
@@ -172,7 +172,7 @@ process SYLPH_TAXONOMY {
 
 process BAKTA_ANNOTATION {
     tag "Bakta: $sra_id"
-    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'copy', pattern: "${sra_id}.{faa,ffn,tsv,gff3,txt}"
     conda "bakta ncbi-amrfinderplus"
 
     input:
@@ -181,8 +181,9 @@ process BAKTA_ANNOTATION {
     output:
         tuple val(sra_id), path("${sra_id}.bakta/*.faa"), emit: proteins
         tuple val(sra_id), path("${sra_id}.bakta/*.ffn"), emit: nucleotides
-        tuple val(sra_id), path("${sra_id}.bakta/*.tsv"), emit: tsv
+        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
         tuple val(sra_id), path("${sra_id}.bakta"), emit: annotation_dir
+        path("*.{faa,ffn,tsv,gff3,txt}")
 
     script:
     """
@@ -211,12 +212,13 @@ process BAKTA_ANNOTATION {
     ${contigs_fa}/final.contigs.fa
 
     rm -rf \$MEMFS/db
+    cp ${sra_id}.bakta/* .
     """
 }
 
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'copy', pattern: "${meta.id}_clustered_catalog.fna"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     input:
@@ -239,7 +241,7 @@ process CREATE_CATALOG_AND_INDEX {
 
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'copy', pattern: "${meta.id}.idxstats.txt"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     input:
@@ -265,9 +267,9 @@ process ALIGN_AND_QUANTIFY_READS {
 }
 
 process CALCULATE_TPM_AND_ANNOTATE {
-
     tag "TPM & Annotate for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
+    conda "pandas"
 
     input:
         tuple val(meta), path(idxstats), path(tsv_file)
@@ -354,13 +356,11 @@ process CALCULATE_TPM_AND_ANNOTATE {
         """
 }
 
-
 // =======================================================
 // --- BRANCH 3 PROCESSES ---
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: $sra_id"
-    publishDir "$params.outdir/published/branch_3/01_mapping/$sra_id", mode: 'symlink'
     conda "bowtie2 samtools"
 
     input:
@@ -384,7 +384,6 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sra_id"
-    publishDir "$params.outdir/published/branch_3/02_binning/$sra_id", mode: 'symlink'
     conda "metabat2"
 
     input:
@@ -404,26 +403,29 @@ process METABAT2_BINNING {
 
 process CHECKM_QA {
     tag "CheckM: $sra_id"
-    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
     conda "checkm2"
 
     input:
         tuple val(sra_id), path(bins_dir)
 
     output:
-        tuple val(sra_id), path("${sra_id}_checkm2_out"), emit: checkm_dir
-        tuple val(sra_id), path("${sra_id}_checkm2_out/quality_report.tsv"), emit: checkm_summary
+        tuple val(sra_id), path("quality_report.tsv"), emit: checkm_summary
+        tuple val(sra_id), path("DIAMOND_RESULTS.tsv")
 
 
+    // cp is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
     script:
     """
     checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
+    cp ${sra_id}_checkm2_out/quality_report.tsv quality_report.tsv
+    cp ${sra_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
     """
 }
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sra_id"
-    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'symlink'
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{gtdbtk.bac120.summary.tsv,hq_bins}'
     conda "python=3.12 gtdbtk pandas"
 
     input:
@@ -431,6 +433,8 @@ process FILTER_AND_ANNOTATE {
 
     output:
         tuple val(sra_id), path("${sra_id}_gtdbtk_out"), emit: gtdbtk_results
+        path("hq_bins"), emit: hq_bins
+        path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary
 
     script:
     def min_completeness = 90
@@ -477,9 +481,9 @@ process FILTER_AND_ANNOTATE {
         --out_dir ${sra_id}_gtdbtk_out \\
         --cpus ${task.cpus} \\
         --extension fa
+        cp ${sra_id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv gtdbtk.bac120.summary.tsv
     else
-        mkdir ${sra_id}_gtdbtk_out
-        touch ${sra_id}_gtdbtk_out/NO_HQ_BINS_FOUND.txt
+        touch NO_HQ_BINS_FOUND.tsv
     fi
     """
 }
