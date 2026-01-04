@@ -6,18 +6,46 @@ log.info """
          =========================================
          """
 
-ch_samples = Channel.of(params.input)
-
 // ========================================================================================
 //  WORKFLOW
 
 workflow {
     // --- 1. Get Reads ---
-    ENA_DOWNLOAD(ch_samples)
-    ch_raw_reads = ENA_DOWNLOAD.out.reads
+    ch_inputs = Channel
+        .fromPath(params.input)
+        .splitCsv(header: true)
+        .map { row -> row.sra_id }
+        .map { sra_id ->
+            def sra_file = file("${params.indir}/${sra_id}/${sra_id}.sra")
+            def fq1      = file("${params.indir}/${sra_id}/${sra_id}_1.fastq.gz")
+            def fq2      = file("${params.indir}/${sra_id}/${sra_id}_2.fastq.gz")
+            def fq       = file("${params.indir}/${sra_id}/${sra_id}.fastq.gz")
+
+            if (sra_file.exists()) {
+                return tuple(sra_id, sra_file, 'sra')
+            } else if (fq1.exists()) {
+                return tuple(sra_id, [fq1, fq2], 'fastq')
+            } else if (fq.exists()) {
+                log.warn "Single fastq input file ${sra_id} - not implemented"
+            } else {
+                log.warn "Missing input files for ${sra_id}"
+            }
+        }
+        .branch {
+            to_convert: it[2] == 'sra'
+            fastq_gz:  it[2] == 'fastq'
+        }
+
+
+    ch_sra_input = ch_inputs.to_convert.map { id, file, type -> tuple(id, file) }
+
+    CHECK_AND_CONVERT_READS(ch_sra_input)
+    ch_fastq_gz = ch_inputs.fastq_gz.map { id, files, type -> tuple(id, files) }
+
+    ch_ready_for_qc = ch_fastq_gz.mix(CHECK_AND_CONVERT_READS.out.fastq)
 
     // --- 2. Quality Control & Decontamination ---
-    FASTP_QC(ch_raw_reads)
+    FASTP_QC(ch_ready_for_qc)
     REMOVE_HUMAN_READS(FASTP_QC.out.reads)
     ch_non_human_reads = REMOVE_HUMAN_READS.out.reads
 
@@ -84,6 +112,21 @@ process ENA_DOWNLOAD {
     script:
     """
     kingfisher get -r $sra_id -t ${task.cpus} -f fastq.gz -m ena-ftp prefetch aws-http
+    """
+}
+
+process CHECK_AND_CONVERT_READS {
+    conda "kingfisher"  // kingfisher includes fasterq-dump
+
+    input:
+        tuple val(sra_id), path(sra_file)
+
+    output:
+        tuple val(sra_id), path("*.fastq"), emit: fastq
+
+    script:
+    """
+    fasterq-dump "${sra_file}" --threads ${task.cpus}
     """
 }
 
