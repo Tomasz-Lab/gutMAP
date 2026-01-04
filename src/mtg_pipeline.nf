@@ -66,21 +66,18 @@ workflow {
     ch_for_catalog_creation = ch_non_human_reads
         .join(BAKTA_ANNOTATION.out.nucleotides)
         .join(BAKTA_ANNOTATION.out.tsv)
-        .map { sra_id, reads, ffn, tsv -> [ [id: sra_id], reads, ffn, tsv ] }
 
     CREATE_CATALOG_AND_INDEX(ch_for_catalog_creation)
 
     // Combine reads with the newly created index for alignment
     ch_for_alignment = ch_non_human_reads
-        .combine(CREATE_CATALOG_AND_INDEX.out.index)
-        .map { sra_id, reads, meta, index_files -> [ meta, reads, index_files ] }
+        .join(CREATE_CATALOG_AND_INDEX.out.index)
 
     ALIGN_AND_QUANTIFY_READS(ch_for_alignment)
 
     // Combine the read counts with the original tsv for final annotation
     ch_for_annotation = ALIGN_AND_QUANTIFY_READS.out.idxstats
-        .combine(BAKTA_ANNOTATION.out.tsv)
-        .map { meta, idxstats, sra_id, tsv -> [ meta, idxstats, tsv ] }
+        .join(BAKTA_ANNOTATION.out.tsv)
 
     CALCULATE_TPM_AND_ANNOTATE(ch_for_annotation)
     // =======================================================
@@ -140,8 +137,8 @@ process FASTP_QC {
 
     output:
         tuple val(sra_id), path("*.trimmed.fastq"), emit: reads
-        path "*.html", emit: html_report
-        path "*.json", emit: json_report
+        tuple val(sra_id), path("*.html"), emit: html_report
+        tuple val(sra_id), path("*.json"), emit: json_report
 
     script:
     def (r1, r2) = reads
@@ -179,7 +176,7 @@ process MEGAHIT_ASSEMBLY {
 
     output:
         tuple val(sra_id), path("${sra_id}_megahit_out"), emit: assembly
-        path("final.contigs.fa")
+        tuple val(sra_id), path("final.contigs.fa")
 
     script:
     def (r1, r2) = reads
@@ -201,7 +198,7 @@ process SYLPH_TAXONOMY {
         tuple val(sra_id), path(reads)
 
     output:
-        path "${sra_id}.sylph_profile.tsv"
+        tuple val(sra_id), path("${sra_id}.sylph_profile.tsv")
 
     script:
     def (r1, r2) = reads
@@ -226,7 +223,7 @@ process BAKTA_ANNOTATION {
         tuple val(sra_id), path("${sra_id}.bakta/*.ffn"), emit: nucleotides
         tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
         tuple val(sra_id), path("${sra_id}.bakta"), emit: annotation_dir
-        path("*.{faa,ffn,tsv,gff3,txt}")
+        tuple val(sra_id), path("*.{faa,ffn,tsv,gff3,txt}")
 
     script:
     """
@@ -260,19 +257,18 @@ process BAKTA_ANNOTATION {
 }
 
 process CREATE_CATALOG_AND_INDEX {
-    tag "Catalog & Index for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'copy', pattern: "${meta.id}_clustered_catalog.fna"
+    tag "Catalog & Index for ${sra_id}"
+    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}", mode: 'copy', pattern: "${sra_id}_clustered_catalog.fna"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     input:
-        tuple val(meta), path(reads), path(ffn), path(tsv)
+        tuple val(sra_id), path(reads), path(ffn), path(tsv)
 
     output:
-        tuple val(meta), path("${meta.id}_clustered_catalog.fna*"), emit: index
+        tuple val(sra_id), path("${sra_id}_clustered_catalog.fna*"), emit: index
 
     script:
-    def sampleid = meta.id
-    def catalog_fna = "${sampleid}_clustered_catalog.fna"
+    def catalog_fna = "${sra_id}_clustered_catalog.fna"
     """
     # Step 1: Cluster at 100%
     cd-hit-est -i ${ffn} -o ${catalog_fna} -c 1.0 -T ${task.cpus} -d 0 -M 0
@@ -283,19 +279,18 @@ process CREATE_CATALOG_AND_INDEX {
 }
 
 process ALIGN_AND_QUANTIFY_READS {
-    tag "Align & Count for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'copy', pattern: "${meta.id}.idxstats.txt"
+    tag "Align & Count for ${sra_id}"
+    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${sra_id}", mode: 'copy', pattern: "${sra_id}.idxstats.txt"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     input:
-        tuple val(meta), path(reads), path(index_files)
+        tuple val(sra_id), path(reads), path(index_files)
 
     output:
-        tuple val(meta), path("${meta.id}.idxstats.txt"), emit: idxstats
+        tuple val(sra_id), path("${sra_id}.idxstats.txt"), emit: idxstats
 
     script:
-    def sampleid = meta.id
-    def sorted_bam = "${sampleid}.bam"
+    def sorted_bam = "${sra_id}.bam"
     // Find the .fna file in the index file list to use as the base for alignment
     def index_base = index_files.find { it.name.endsWith('.fna') }
     """
@@ -305,23 +300,23 @@ process ALIGN_AND_QUANTIFY_READS {
 
     # Step 4: Index the sorted BAM file and get read counts
     samtools index --threads ${task.cpus} ${sorted_bam}
-    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sampleid}.idxstats.txt
+    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
     """
 }
 
 process CALCULATE_TPM_AND_ANNOTATE {
-    tag "TPM & Annotate for ${meta.id}"
-    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
+    tag "TPM & Annotate for ${sra_id}"
+    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}", mode: 'copy', pattern: "${sra_id}_gene_quantification.tsv"
     conda "pandas"
 
     input:
-        tuple val(meta), path(idxstats), path(tsv_file)
+        tuple val(sra_id), path(idxstats), path(tsv_file)
 
     output:
-        tuple val(meta), path("${meta.id}_gene_quantification.tsv"), emit: quantification
+        tuple val(sra_id), path("${sra_id}_gene_quantification.tsv"), emit: quantification
 
     script:
-        def merged_output = "${meta.id}_gene_quantification.tsv"
+        def merged_output = "${sra_id}_gene_quantification.tsv"
 
         """
         python3 - <<'EOF'
@@ -476,14 +471,13 @@ process FILTER_AND_ANNOTATE {
 
     output:
         tuple val(sra_id), path("${sra_id}_gtdbtk_out"), emit: gtdbtk_results
-        path("hq_bins"), emit: hq_bins
-        path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary
+        tuple val(sra_id), path("hq_bins"), emit: hq_bins
+        tuple val(sra_id), path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary
 
     script:
     def min_completeness = 90
     def max_contamination = 5
     """
-    # Use a here-document to create a python filtering script on-the-fly
     cat << EOF > filter_bins.py
     #!/usr/bin/env python
     import pandas as pd
