@@ -215,6 +215,11 @@ process BAKTA_ANNOTATION {
     publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'copy', pattern: "${sra_id}.{faa,ffn,tsv,gff3,txt}"
     conda "bakta ncbi-amrfinderplus"
 
+    cpus 16
+    memory "400 GB"
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem', '-C memfs'
+
     input:
         tuple val(sra_id), path(contigs_fa)
 
@@ -443,6 +448,11 @@ process CHECKM_QA {
     tag "CheckM: $sra_id"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
     conda "checkm2"
+
+    cpus 16
+    memory "450 GB"
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem', '-C memfs'
 
     input:
         tuple val(sra_id), path(bins_dir)
