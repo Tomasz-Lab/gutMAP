@@ -418,10 +418,7 @@ process MAP_FOR_BINNING {
     def contigs = "${megahit_dir}/final.contigs.fa"
     """
     bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-    bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} -S temp.sam
-
-    samtools view -u -b -F 4 temp.sam | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
-    rm temp.sam
+    bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
     """
 }
 
