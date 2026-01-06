@@ -165,8 +165,7 @@ process REMOVE_HUMAN_READS {
     script:
     def (r1, r2) = reads
     """
-    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local \\
-        --un-conc ${sra_id}.nonhuman.fastq -S /dev/null
+    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local --un-conc ${sra_id}.nonhuman.fastq -S /dev/null
     """
 }
 
@@ -233,10 +232,8 @@ process BAKTA_ANNOTATION {
         tuple val(sra_id), path(contigs_fa)
 
     output:
-        tuple val(sra_id), path("${sra_id}.bakta/*.faa"), emit: proteins
-        tuple val(sra_id), path("${sra_id}.bakta/*.ffn"), emit: nucleotides
+        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.ffn"), emit: nucleotides
         tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
-        tuple val(sra_id), path("${sra_id}.bakta"), emit: annotation_dir
         tuple val(sra_id), path("*.{faa,ffn,tsv,gff3,txt}")
 
     script:
@@ -480,7 +477,7 @@ process CHECKM_QA {
 
     output:
         tuple val(sra_id), path("quality_report.tsv"), emit: checkm_summary
-        tuple val(sra_id), path("DIAMOND_RESULTS.tsv")
+        tuple val(sra_id), path("DIAMOND_RESULTS.tsv"), emit: diamond_results
 
 
     // ln -s is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
