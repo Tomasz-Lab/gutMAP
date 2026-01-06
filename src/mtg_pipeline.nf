@@ -189,7 +189,7 @@ process MEGAHIT_ASSEMBLY {
     def (r1, r2) = reads
     """
     megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
-    cp ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
+    ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
     """
 }
 
@@ -266,7 +266,7 @@ process BAKTA_ANNOTATION {
     ${contigs_fa}/final.contigs.fa
 
     rm -rf \$MEMFS/db
-    cp ${sra_id}.bakta/* .
+    ln -s ${sra_id}.bakta/* .
     """
 }
 
@@ -487,8 +487,8 @@ process CHECKM_QA {
     script:
     """
     checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
-    cp ${sra_id}_checkm2_out/quality_report.tsv quality_report.tsv
-    cp ${sra_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
+    ln -s ${sra_id}_checkm2_out/quality_report.tsv quality_report.tsv
+    ln -s ${sra_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
     """
 }
 
