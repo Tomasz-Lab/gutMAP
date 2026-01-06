@@ -132,6 +132,8 @@ process FASTP_QC {
     publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'copy', pattern: "*.json"
     conda "fastp"
 
+    cpus 12
+    memory "30 GB"
     input:
         tuple val(sra_id), path(reads)
 
@@ -152,6 +154,8 @@ process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sra_id"
     conda "bowtie2"
 
+    cpus 16
+    memory "30 GB"
     input:
         tuple val(sra_id), path(reads)
 
@@ -170,6 +174,9 @@ process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sra_id"
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'copy', pattern: "final.contigs.fa"
     conda "megahit"
+
+    cpus 20
+    memory "30 GB"
 
     input:
         tuple val(sra_id), path(reads)
@@ -194,6 +201,8 @@ process SYLPH_TAXONOMY {
     publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'copy', pattern: "${sra_id}.sylph_profile.tsv"
     conda "sylph"
 
+    cpus 2
+    memory "40 GB"
     input:
         tuple val(sra_id), path(reads)
 
@@ -266,6 +275,9 @@ process CREATE_CATALOG_AND_INDEX {
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}", mode: 'copy', pattern: "${sra_id}_clustered_catalog.fna"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
+    cpus 6
+    memory "20 GB"
+
     input:
         tuple val(sra_id), path(reads), path(ffn), path(tsv)
 
@@ -287,6 +299,9 @@ process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${sra_id}"
     publishDir "$params.outdir/published/branch_2/03_gene_quantification/${sra_id}", mode: 'copy', pattern: "${sra_id}.idxstats.txt"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
+
+    cpus 16
+    memory "60 GB"
 
     input:
         tuple val(sra_id), path(reads), path(index_files)
@@ -313,6 +328,9 @@ process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${sra_id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}", mode: 'copy', pattern: "${sra_id}_gene_quantification.tsv"
     conda "pandas"
+
+    cpus 1
+    memory "10 GB"
 
     input:
         tuple val(sra_id), path(idxstats), path(tsv_file)
@@ -406,6 +424,9 @@ process MAP_FOR_BINNING {
     tag "Map for Binning: $sra_id"
     conda "bowtie2 samtools"
 
+    cpus 20
+    memory "60 GB"
+
     input:
         tuple val(sra_id), path(reads), path(megahit_dir)
 
@@ -425,6 +446,9 @@ process MAP_FOR_BINNING {
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sra_id"
     conda "metabat2"
+
+    cpus 8
+    memory "20 GB"
 
     input:
         tuple val(sra_id), path(bam), path(megahit_dir)
@@ -459,7 +483,7 @@ process CHECKM_QA {
         tuple val(sra_id), path("DIAMOND_RESULTS.tsv")
 
 
-    // cp is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
+    // ln -s is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
     script:
     """
     checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
@@ -472,6 +496,9 @@ process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sra_id"
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{gtdbtk.bac120.summary.tsv,hq_bins}'
     conda "python=3.12 gtdbtk pandas"
+
+    cpus 20
+    memory "100 GB"
 
     input:
         tuple val(sra_id), path(bins_dir), path(checkm_summary)
