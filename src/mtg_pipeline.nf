@@ -27,7 +27,7 @@ workflow {
                 return tuple(sra_id, [fq1, fq2], 'fastq')
             }
             else if (fq.exists()) {
-                log.warn "Single fastq input file ${sra_id} - not implemented"
+                tuple(sra_id, [fq], 'fastq')
             }
             else {
                 log.warn "Bad/missing input files for ${sra_id}"
@@ -35,16 +35,16 @@ workflow {
         }
         .branch {
             to_convert: it[2] == 'sra'
-            fastq_gz:  it[2] == 'fastq'
+            fastq:  it[2] == 'fastq'
         }
 
 
     ch_sra_input = ch_inputs.to_convert.map { id, file, type -> tuple(id, file) }
 
     CHECK_AND_CONVERT_READS(ch_sra_input)
-    ch_fastq_gz = ch_inputs.fastq_gz.map { id, files, type -> tuple(id, files) }
+    ch_fastq = ch_inputs.fastq.map { id, files, type -> tuple(id, files) }
 
-    ch_ready_for_qc = ch_fastq_gz.mix(CHECK_AND_CONVERT_READS.out.fastq)
+    ch_ready_for_qc = ch_fastq.mix(CHECK_AND_CONVERT_READS.out.fastq)
 
     // --- 2. Quality Control & Decontamination ---
     FASTP_QC(ch_ready_for_qc)
@@ -130,11 +130,27 @@ process FASTP_QC {
         tuple val(sra_id), path("*.json"), emit: json_report
 
     script:
-    def (r1, r2) = reads
-    """
-    fastp --in1 ${r1} --in2 ${r2} --out1 ${sra_id}_1.trimmed.fastq --out2 ${sra_id}_2.trimmed.fastq \\
-        --html ${sra_id}.fastp.html --json ${sra_id}.fastp.json --thread ${task.cpus} --detect_adapter_for_pe
-    """
+    if (reads.size() == 2) {
+        def (r1, r2) = reads
+        """
+        fastp --in1 ${r1} --in2 ${r2} \
+              --out1 ${sra_id}_1.trimmed.fastq \
+              --out2 ${sra_id}_2.trimmed.fastq \
+              --html ${sra_id}.fastp.html \
+              --json ${sra_id}.fastp.json \
+              --thread ${task.cpus} \
+              --detect_adapter_for_pe
+        """
+    } else {
+        def r1 = reads[0]
+        """
+        fastp -i ${r1} \
+              -o ${sra_id}.trimmed.fastq \
+              --html ${sra_id}.fastp.html \
+              --json ${sra_id}.fastp.json \
+              --thread ${task.cpus} \
+        """
+    }
 }
 
 process REMOVE_HUMAN_READS {
@@ -147,13 +163,30 @@ process REMOVE_HUMAN_READS {
         tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sra_id), path("${sra_id}.nonhuman.{1,2}.fastq"), emit: reads
+        tuple val(sra_id), path("${sra_id}.nonhuman*.fastq"), emit: reads
 
     script:
-    def (r1, r2) = reads
-    """
-    bowtie2 -x ${params.bowtie2_hg38_index} -1 ${r1} -2 ${r2} --threads ${task.cpus} --very-sensitive-local --un-conc ${sra_id}.nonhuman.fastq -S /dev/null
-    """
+    if (reads.size() == 2) {
+        def (r1, r2) = reads
+        """
+        bowtie2 -x ${params.bowtie2_hg38_index} \
+                -1 ${r1} -2 ${r2} \
+                --threads ${task.cpus} \
+                --very-sensitive-local \
+                --un-conc ${sra_id}.nonhuman.fastq \
+                -S /dev/null
+        """
+    } else {
+        def r1 = reads[0]
+        """
+        bowtie2 -x ${params.bowtie2_hg38_index} \
+                -U ${r1} \
+                --threads ${task.cpus} \
+                --very-sensitive-local \
+                --un ${sra_id}.nonhuman.fastq \
+                -S /dev/null
+        """
+    }
 }
 
 process MEGAHIT_ASSEMBLY {
@@ -172,11 +205,19 @@ process MEGAHIT_ASSEMBLY {
         tuple val(sra_id), path("final.contigs.fa")
 
     script:
-    def (r1, r2) = reads
-    """
-    megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
-    ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
-    """
+    if (reads.size() == 2) {
+        def (r1, r2) = reads
+        """
+        megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
+        """
+    } else {
+        def r1 = reads[0]
+        """
+        megahit -r ${r1} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
+        """
+    }
 }
 
 // =======================================================
@@ -196,10 +237,17 @@ process SYLPH_TAXONOMY {
         tuple val(sra_id), path("${sra_id}.sylph_profile.tsv")
 
     script:
-    def (r1, r2) = reads
-    """
-    sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
-    """
+    if (reads.size() == 2) {
+        def (r1, r2) = reads
+        """
+        sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
+        """
+    } else {
+        def r1 = reads[0]
+        """
+        sylph profile ${params.sylph_db} -r ${r1} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
+        """
+    }
 }
 
 // =======================================================
@@ -294,18 +342,23 @@ process ALIGN_AND_QUANTIFY_READS {
         tuple val(sra_id), path("${sra_id}.idxstats.txt"), emit: idxstats
 
     script:
-    def sorted_bam = "${sra_id}.bam"
     // Find the .fna file in the index file list to use as the base for alignment
     def index_base = index_files.find { it.name.endsWith('.fna') }
-    """
-    # Step 3: Align reads to the catalogue and create a sorted BAM file
-    bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | \\
-        samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
+    def sorted_bam = "${sra_id}.bam"
 
-    # Step 4: Index the sorted BAM file and get read counts
-    samtools index --threads ${task.cpus} ${sorted_bam}
-    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
-    """
+    if (reads.size() == 2) {
+        """
+        bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
+        samtools index --threads ${task.cpus} ${sorted_bam}
+        samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
+        """
+    } else {
+        """
+        bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
+        samtools index --threads ${task.cpus} ${sorted_bam}
+        samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
+        """
+    }
 }
 
 process CALCULATE_TPM_AND_ANNOTATE {
@@ -419,12 +472,21 @@ process MAP_FOR_BINNING {
 
 
     script:
-    def (r1, r2) = reads
     def contigs = "${megahit_dir}/final.contigs.fa"
-    """
-    bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-    bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
-    """
+
+    if (reads.size() == 2) {
+        def (r1, r2) = reads
+        """
+        bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
+        bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+        """
+    } else {
+        def r1 = reads[0]
+        """
+        bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
+        bowtie2 -x ${sra_id}.assembly.idx -U ${r1} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+        """
+    }
 }
 
 process METABAT2_BINNING {
