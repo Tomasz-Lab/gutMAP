@@ -10,25 +10,27 @@ log.info """
 //  WORKFLOW
 
 workflow {
-    // --- 1. Get Reads ---
     ch_inputs = Channel
         .fromPath(params.input)
         .splitCsv(header: true)
         .map { row -> row.sra_id }
         .map { sra_id ->
             def sra_file = file("${params.indir}/${sra_id}/${sra_id}.sra")
-            def fq1      = file("${params.indir}/${sra_id}/${sra_id}_1.fastq.gz")
-            def fq2      = file("${params.indir}/${sra_id}/${sra_id}_2.fastq.gz")
-            def fq       = file("${params.indir}/${sra_id}/${sra_id}.fastq.gz")
+            def fq1 = file("${params.indir}/${sra_id}/${sra_id}_1.fastq.gz")
+            def fq2 = file("${params.indir}/${sra_id}/${sra_id}_2.fastq.gz")
+            def fq  = file("${params.indir}/${sra_id}/${sra_id}.fastq.gz")
 
             if (sra_file.exists()) {
                 return tuple(sra_id, sra_file, 'sra')
-            } else if (fq1.exists()) {
+            }
+            else if (fq1.exists() && fq2.exists()) {
                 return tuple(sra_id, [fq1, fq2], 'fastq')
-            } else if (fq.exists()) {
+            }
+            else if (fq.exists()) {
                 log.warn "Single fastq input file ${sra_id} - not implemented"
-            } else {
-                log.warn "Missing input files for ${sra_id}"
+            }
+            else {
+                log.warn "Bad/missing input files for ${sra_id}"
             }
         }
         .branch {
@@ -96,22 +98,6 @@ workflow {
 //  PROCESSES
 // ========================================================================================
 
-process ENA_DOWNLOAD {
-    tag "ENA Download: $sra_id"
-    conda "kingfisher"
-
-    input:
-        val(sra_id)
-
-    output:
-        tuple val(sra_id), path("*.fastq.gz"), emit: reads
-
-    script:
-    """
-    kingfisher get -r $sra_id -t ${task.cpus} -f fastq.gz -m ena-ftp prefetch aws-http
-    """
-}
-
 process CHECK_AND_CONVERT_READS {
     conda "kingfisher"  // kingfisher includes fasterq-dump
 
@@ -134,6 +120,7 @@ process FASTP_QC {
 
     cpus 12
     memory "30 GB"
+
     input:
         tuple val(sra_id), path(reads)
 
