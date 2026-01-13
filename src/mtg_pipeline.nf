@@ -131,9 +131,8 @@ process FASTP_QC {
 
     script:
     if (reads.size() == 2) {
-        def (r1, r2) = reads
         """
-        fastp --in1 ${r1} --in2 ${r2} \
+        fastp --in1 ${reads[0]} --in2 ${reads[1]} \
               --out1 ${sra_id}_1.trimmed.fastq \
               --out2 ${sra_id}_2.trimmed.fastq \
               --html ${sra_id}.fastp.html \
@@ -142,9 +141,8 @@ process FASTP_QC {
               --detect_adapter_for_pe
         """
     } else {
-        def r1 = reads[0]
         """
-        fastp -i ${r1} \
+        fastp -i ${reads[0]} \
               -o ${sra_id}.trimmed.fastq \
               --html ${sra_id}.fastp.html \
               --json ${sra_id}.fastp.json \
@@ -167,20 +165,18 @@ process REMOVE_HUMAN_READS {
 
     script:
     if (reads.size() == 2) {
-        def (r1, r2) = reads
         """
         bowtie2 -x ${params.bowtie2_hg38_index} \
-                -1 ${r1} -2 ${r2} \
+                -1 ${reads[0]} -2 ${reads[1]} \
                 --threads ${task.cpus} \
                 --very-sensitive-local \
                 --un-conc ${sra_id}.nonhuman.fastq \
                 -S /dev/null
         """
     } else {
-        def r1 = reads[0]
         """
         bowtie2 -x ${params.bowtie2_hg38_index} \
-                -U ${r1} \
+                -U ${reads[0]} \
                 --threads ${task.cpus} \
                 --very-sensitive-local \
                 --un ${sra_id}.nonhuman.fastq \
@@ -206,15 +202,13 @@ process MEGAHIT_ASSEMBLY {
 
     script:
     if (reads.size() == 2) {
-        def (r1, r2) = reads
         """
-        megahit -1 ${r1} -2 ${r2} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        megahit -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
         """
     } else {
-        def r1 = reads[0]
         """
-        megahit -r ${r1} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        megahit -r ${reads[0]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
         """
     }
@@ -238,14 +232,12 @@ process SYLPH_TAXONOMY {
 
     script:
     if (reads.size() == 2) {
-        def (r1, r2) = reads
         """
-        sylph profile ${params.sylph_db} -1 ${r1} -2 ${r2} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
+        sylph profile ${params.sylph_db} -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
         """
     } else {
-        def r1 = reads[0]
         """
-        sylph profile ${params.sylph_db} -r ${r1} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
+        sylph profile ${params.sylph_db} -r ${reads[0]} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
         """
     }
 }
@@ -475,16 +467,14 @@ process MAP_FOR_BINNING {
     def contigs = "${megahit_dir}/final.contigs.fa"
 
     if (reads.size() == 2) {
-        def (r1, r2) = reads
         """
         bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-        bowtie2 -x ${sra_id}.assembly.idx -1 ${r1} -2 ${r2} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+        bowtie2 -x ${sra_id}.assembly.idx -1 ${reads[0]} -2 ${reads[1]} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
         """
     } else {
-        def r1 = reads[0]
         """
         bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-        bowtie2 -x ${sra_id}.assembly.idx -U ${r1} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+        bowtie2 -x ${sra_id}.assembly.idx -U ${reads[0]} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
         """
     }
 }
