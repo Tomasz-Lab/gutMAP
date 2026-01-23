@@ -530,7 +530,7 @@ process CHECKM_QA {
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sra_id"
-    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{gtdbtk.bac120.summary.tsv,hq_bins}'
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{gtdbtk.bac120.summary.tsv,hq_bins,NO_HQ_BINS_FOUND.tsv}'
     conda "python=3.12 gtdbtk pandas"
 
     cpus 20
@@ -540,9 +540,9 @@ process FILTER_AND_ANNOTATE {
         tuple val(sra_id), path(bins_dir), path(checkm_summary)
 
     output:
-        tuple val(sra_id), path("${sra_id}_gtdbtk_out"), emit: gtdbtk_results
         tuple val(sra_id), path("hq_bins"), emit: hq_bins
-        tuple val(sra_id), path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary
+        tuple val(sra_id), path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary, optional: true
+        tuple val(sra_id), path("NO_HQ_BINS_FOUND.tsv"), emit: NO_HQ_BINS_FOUND, optional: true
 
     script:
     def min_completeness = 90
