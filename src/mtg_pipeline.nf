@@ -99,6 +99,7 @@ workflow {
 // ========================================================================================
 
 process CHECK_AND_CONVERT_READS {
+    tag "fasterq-dump: $sra_id"
     conda "kingfisher"  // kingfisher includes fasterq-dump
 
     input:
@@ -115,7 +116,8 @@ process CHECK_AND_CONVERT_READS {
 
 process FASTP_QC {
     tag "fastp: $sra_id"
-    publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'copy', pattern: "*.json"
+    publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'copy', pattern: "{*.json,*.html}"
+    publishDir "$params.outdir/published/02_fastp_qc/$sra_id/logs", mode: 'copy', pattern: ".command*"
     conda "fastp"
 
     cpus 12
@@ -128,6 +130,7 @@ process FASTP_QC {
         tuple val(sra_id), path("*.trimmed.fastq"), emit: reads
         tuple val(sra_id), path("*.html"), emit: html_report
         tuple val(sra_id), path("*.json"), emit: json_report
+        path(".command*")
 
     script:
     if (reads.size() == 2) {
@@ -153,15 +156,18 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sra_id"
+    publishDir "$params.outdir/published/03_non_human_reads/$sra_id/logs", mode: 'copy', pattern: ".command*"
     conda "bowtie2"
 
     cpus 16
     memory "30 GB"
+
     input:
         tuple val(sra_id), path(reads)
 
     output:
         tuple val(sra_id), path("${sra_id}.nonhuman*.fastq"), emit: reads
+        path(".command*")
 
     script:
     if (reads.size() == 2) {
@@ -188,6 +194,7 @@ process REMOVE_HUMAN_READS {
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sra_id"
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'copy', pattern: "final.contigs.fa"
+    publishDir "$params.outdir/published/04_shared_assembly/$sra_id/logs", mode: 'copy', pattern: "{.command*,log,options.json}"
     conda "megahit"
 
     cpus 20
@@ -198,18 +205,23 @@ process MEGAHIT_ASSEMBLY {
 
     output:
         tuple val(sra_id), path("${sra_id}_megahit_out"), emit: assembly
-        tuple val(sra_id), path("final.contigs.fa")
+        path("*")
+        path(".command*")
 
     script:
     if (reads.size() == 2) {
         """
         megahit -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
+        ln -s ${sra_id}_megahit_out/log log
+        ln -s ${sra_id}_megahit_out/options.json options.json
         """
     } else {
         """
         megahit -r ${reads[0]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
+        ln -s ${sra_id}_megahit_out/log log
+        ln -s ${sra_id}_megahit_out/options.json options.json
         """
     }
 }
@@ -220,6 +232,7 @@ process MEGAHIT_ASSEMBLY {
 process SYLPH_TAXONOMY {
     tag "Sylph: $sra_id"
     publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'copy', pattern: "${sra_id}.sylph_profile.tsv"
+    publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id/logs", mode: 'copy', pattern: ".command*"
     conda "sylph"
 
     cpus 2
@@ -228,7 +241,8 @@ process SYLPH_TAXONOMY {
         tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sra_id), path("${sra_id}.sylph_profile.tsv")
+        tuple val(sra_id), path("${sra_id}.sylph_profile.tsv"), emit: sylph_profile
+        path(".command*")
 
     script:
     if (reads.size() == 2) {
@@ -248,10 +262,11 @@ process SYLPH_TAXONOMY {
 process BAKTA_ANNOTATION {
     tag "Bakta: $sra_id"
     publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'copy', pattern: "${sra_id}.{faa,ffn,tsv,gff3,txt}"
+    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id/logs", mode: 'copy', pattern: "{.command*,*.log}"
     conda "bakta ncbi-amrfinderplus"
 
     cpus 16
-    memory "400 GB"
+    memory '400 GB'
     queue 'plgrid-bigmem'
     clusterOptions '-A plggutmap100k-cpu-bigmem', '-C memfs'
 
@@ -261,7 +276,8 @@ process BAKTA_ANNOTATION {
     output:
         tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.ffn"), emit: nucleotides
         tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
-        tuple val(sra_id), path("*.{faa,ffn,tsv,gff3,txt}")
+        tuple val(sra_id), path("*.{faa,ffn,tsv,gff3,txt,log}")
+        path(".command*")
 
     script:
     """
@@ -274,7 +290,6 @@ process BAKTA_ANNOTATION {
     --output ${sra_id}.bakta \
     --prefix ${sra_id} \
     --threads ${task.cpus} \
-    --debug \
     --verbose \
     --skip-trna \
     --skip-tmrna \
@@ -297,6 +312,7 @@ process BAKTA_ANNOTATION {
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${sra_id}"
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}", mode: 'copy', pattern: "${sra_id}_clustered_catalog.fna"
+    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}/logs", mode: 'copy', pattern: ".command*"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     cpus 6
@@ -307,6 +323,7 @@ process CREATE_CATALOG_AND_INDEX {
 
     output:
         tuple val(sra_id), path("${sra_id}_clustered_catalog.fna*"), emit: index
+        path(".command*")
 
     script:
     def catalog_fna = "${sra_id}_clustered_catalog.fna"
@@ -322,6 +339,7 @@ process CREATE_CATALOG_AND_INDEX {
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${sra_id}"
     publishDir "$params.outdir/published/branch_2/03_gene_quantification/${sra_id}", mode: 'copy', pattern: "${sra_id}.idxstats.txt"
+    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${sra_id}/logs", mode: 'copy', pattern: ".command*"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     cpus 16
@@ -332,6 +350,7 @@ process ALIGN_AND_QUANTIFY_READS {
 
     output:
         tuple val(sra_id), path("${sra_id}.idxstats.txt"), emit: idxstats
+        path(".command*")
 
     script:
     // Find the .fna file in the index file list to use as the base for alignment
@@ -356,6 +375,7 @@ process ALIGN_AND_QUANTIFY_READS {
 process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${sra_id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}", mode: 'copy', pattern: "${sra_id}_gene_quantification.tsv"
+    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}/logs", mode: 'copy', pattern: ".command*"
     conda "pandas"
 
     cpus 1
@@ -366,6 +386,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
     output:
         tuple val(sra_id), path("${sra_id}_gene_quantification.tsv"), emit: quantification
+        path(".command*")
 
     script:
         def merged_output = "${sra_id}_gene_quantification.tsv"
@@ -451,6 +472,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: $sra_id"
+    publishDir "$params.outdir/published/branch_3/01_mapping/$sra_id/logs", mode: 'copy', pattern: ".command*"
     conda "bowtie2 samtools"
 
     cpus 20
@@ -461,7 +483,7 @@ process MAP_FOR_BINNING {
 
     output:
         tuple val(sra_id), path("${sra_id}.sorted.bam"), path(megahit_dir), emit: bam
-
+        path(".command*")
 
     script:
     def contigs = "${megahit_dir}/final.contigs.fa"
@@ -481,6 +503,7 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sra_id"
+    publishDir "$params.outdir/published/branch_3/02_binning/$sra_id/logs", mode: 'copy', pattern: ".command*"
     conda "metabat2"
 
     cpus 8
@@ -491,6 +514,7 @@ process METABAT2_BINNING {
 
     output:
         tuple val(sra_id), path("${sra_id}_bins"), emit: bins
+        path(".command*")
 
     script:
     def contigs = "${megahit_dir}/final.contigs.fa"
@@ -504,6 +528,7 @@ process METABAT2_BINNING {
 process CHECKM_QA {
     tag "CheckM: $sra_id"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
+    publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id/logs", mode: 'copy', pattern: "{.command*,checkm2.log}"
     conda "checkm2"
 
     cpus 16
@@ -517,7 +542,8 @@ process CHECKM_QA {
     output:
         tuple val(sra_id), path("quality_report.tsv"), emit: checkm_summary
         tuple val(sra_id), path("DIAMOND_RESULTS.tsv"), emit: diamond_results
-
+        tuple val(sra_id), path("checkm2.log")
+        path(".command*")
 
     // ln -s is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
     script:
@@ -525,12 +551,14 @@ process CHECKM_QA {
     checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
     ln -s ${sra_id}_checkm2_out/quality_report.tsv quality_report.tsv
     ln -s ${sra_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
+    ln -s ${sra_id}_checkm2_out/checkm2.log checkm2.log
     """
 }
 
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: $sra_id"
-    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{gtdbtk.bac120.summary.tsv,hq_bins,NO_HQ_BINS_FOUND.tsv}'
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{*.tsv,hq_bins}' // move mode does not work and throws java.nio.file.DirectoryNotEmptyException for hq_bins
+    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id/logs", mode: 'copy', pattern: '{.command*,gtdbtk.log,gtdbtk.json}'
     conda "python=3.12 gtdbtk pandas"
 
     cpus 20
@@ -543,6 +571,9 @@ process FILTER_AND_ANNOTATE {
         tuple val(sra_id), path("hq_bins"), emit: hq_bins
         tuple val(sra_id), path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary, optional: true
         tuple val(sra_id), path("NO_HQ_BINS_FOUND.tsv"), emit: NO_HQ_BINS_FOUND, optional: true
+        path("gtdbtk.log"), optional: true
+        path("gtdbtk.json"), optional: true
+        path(".command*")
 
     script:
     def min_completeness = 90
@@ -588,7 +619,9 @@ process FILTER_AND_ANNOTATE {
         --out_dir ${sra_id}_gtdbtk_out \\
         --cpus ${task.cpus} \\
         --extension fa
-        cp ${sra_id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv gtdbtk.bac120.summary.tsv
+        ln -s ${sra_id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv gtdbtk.bac120.summary.tsv
+        ln -s ${sra_id}_gtdbtk_out/gtdbtk.log gtdbtk.log
+        ln -s ${sra_id}_gtdbtk_out/gtdbtk.json gtdbtk.json
     else
         touch NO_HQ_BINS_FOUND.tsv
     fi
