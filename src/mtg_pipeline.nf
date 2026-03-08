@@ -309,7 +309,39 @@ process BAKTA_ANNOTATION {
     --skip-ori \
     --skip-filter \
     --skip-plot \
-    ${contigs_fa}/final.contigs.fa
+    --tmp-dir \$MEMFS \
+    ${contigs_fa}/final.contigs.fa &
+
+
+    # Watchdog loop to detect potential deadlocks in Diamond (which is used internally by Bakta) when running on the shared cluster with memfs.
+    # If all threads of the Diamond process are stuck in a futex wait for 3 consecutive checks (90 seconds), we assume a deadlock and kill the entire Bakta process to trigger a retry.
+    BAKTA_PID=\$!
+    STREAK=0
+    WLOG=${params.outdir}/watchdog.log
+    while kill -0 \$BAKTA_PID 2>/dev/null; do
+        sleep 30
+        DPID=\$(for p in \$(pgrep -f diamond 2>/dev/null); do
+            [ "\$(dirname \$(readlink /proc/\$p/cwd 2>/dev/null))" = "\$MEMFS" ] && echo \$p && break
+        done)
+        if [ -n "\$DPID" ] && [ -d /proc/\$DPID/task ]; then
+            TOTAL=\$(ls /proc/\$DPID/task/ 2>/dev/null | wc -l)
+            STUCK=\$(for t in /proc/\$DPID/task/*/wchan; do cat "\$t" 2>/dev/null; echo; done \
+                    | grep -c "^futex" || true)
+            if [ "\$TOTAL" -ge 2 ] && [ "\$STUCK" -eq "\$TOTAL" ]; then
+                STREAK=\$((STREAK + 1))
+                echo "\$(date -Iseconds) [watchdog:${sra_id}:\$SLURM_JOB_ID] deadlock streak=\$STREAK/3 (PID=\$DPID threads=\$TOTAL)" | tee -a \$WLOG
+                if [ "\$STREAK" -ge 3 ]; then
+                    echo "\$(date -Iseconds) [watchdog:${sra_id}:\$SLURM_JOB_ID] confirmed deadlock — killing bakta" | tee -a \$WLOG
+                    kill \$BAKTA_PID 2>/dev/null
+                    sleep 3; kill -9 \$BAKTA_PID 2>/dev/null || true
+                    exit 1
+                fi
+            else
+                STREAK=0
+            fi
+        fi
+    done
+    wait \$BAKTA_PID
 
     rm -rf \$MEMFS/db
     ln -s ${sra_id}.bakta/* .
