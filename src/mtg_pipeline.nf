@@ -12,7 +12,7 @@ log.info """
 workflow {
     ch_inputs = Channel
         .fromPath(params.input)
-        .splitCsv(header: true)
+        .splitCsv(header: true, limit: params.limit)
         .map { row -> row.sra_id }
         .map { sra_id ->
             def sra_file = file("${params.indir}/${sra_id}/${sra_id}.sra")
@@ -62,12 +62,36 @@ workflow {
 
     // =======================================================
     // --- BRANCH 2: Gene Catalog and Gene Abundance ---
-    BAKTA_ANNOTATION(ch_assembly)
+    // Batch all assemblies into a single BAKTA job with shared memfs DB
+    ch_bakta_input = ch_assembly
+        .buffer(size: params.bakta_batch_size ?: 5, remainder: true)
+        .map { batch ->
+            tuple(
+                batch.collect { it[0] },
+                batch.collect { it[1] }
+            )
+        }
+
+    BAKTA_BATCH(ch_bakta_input)
+
+    // Flatten batch outputs back to per-sample tuples
+    ch_bakta_ffn = BAKTA_BATCH.out.nucleotides.flatMap { ids, files ->
+        ids.collect { id ->
+            def f = files.find { f -> f.name == "${id}.ffn" }
+            f != null ? tuple(id, f) : null
+        }.findAll()
+    }
+    ch_bakta_tsv = BAKTA_BATCH.out.tsv.flatMap { ids, files ->
+        ids.collect { id ->
+            def f = files.find { f -> f.name == "${id}.tsv" }
+            f != null ? tuple(id, f) : null
+        }.findAll()
+    }
 
     // Create a combined channel with the required inputs for catalog creation
     ch_for_catalog_creation = ch_non_human_reads
-        .join(BAKTA_ANNOTATION.out.nucleotides)
-        .join(BAKTA_ANNOTATION.out.tsv)
+        .join(ch_bakta_ffn)
+        .join(ch_bakta_tsv)
 
     CREATE_CATALOG_AND_INDEX(ch_for_catalog_creation)
 
@@ -79,7 +103,7 @@ workflow {
 
     // Combine the read counts with the original tsv for final annotation
     ch_for_annotation = ALIGN_AND_QUANTIFY_READS.out.idxstats
-        .join(BAKTA_ANNOTATION.out.tsv)
+        .join(ch_bakta_tsv)
 
     CALCULATE_TPM_AND_ANNOTATE(ch_for_annotation)
     // =======================================================
@@ -265,86 +289,149 @@ process SYLPH_TAXONOMY {
 // =======================================================
 // --- BRANCH 2 PROCESSES ---
 
-process BAKTA_ANNOTATION {
-    tag "Bakta: $sra_id"
-    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id", mode: 'move', pattern: "${sra_id}.{faa,ffn,tsv,gff3,txt}"
-    publishDir "$params.outdir/published/branch_2/01_annotation/$sra_id/logs", mode: 'copy', pattern: "{.command*,*.log}"
-    afterScript "D=${params.outdir}/published/branch_2/01_annotation/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* *.log \$D/ 2>/dev/null || true"
+process BAKTA_BATCH {
+    tag "BaktaBatch: ${sra_ids.size()} samples: ${sra_ids.join('-')}"
+    afterScript """
+    for SRA in ${sra_ids.join(' ')}; do
+        D=${params.outdir}/published/branch_2/01_annotation/\$SRA
+        mkdir -p \$D \$D/logs
+        cp -f \${SRA}.bakta/\${SRA}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
+        cp -f \${SRA}.bakta/\${SRA}.log \$D/logs/ 2>/dev/null || true
+        cp -f \${SRA}.bakta.stdout.log \$D/logs/ 2>/dev/null || true
+        cp -f ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
+    done
+    """
     conda "bakta ncbi-amrfinderplus"
-
-    cpus 6
-    memory '200 GB'
+    cpus 40
+    memory '280 GB'
     queue 'plgrid'
     clusterOptions '-A plggutmap100k-cpu -C memfs'
+    time 10.h
 
     input:
-        tuple val(sra_id), path(contigs_fa)
+        tuple val(sra_ids), path("contigs_*")
 
     output:
-        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.ffn"), emit: nucleotides
-        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
-        tuple val(sra_id), path("*.{faa,ffn,tsv,gff3,txt,log}")
-        tuple val(sra_id), path(".command*")
+        tuple val(sra_ids), path("*.bakta/*.ffn"), emit: nucleotides
+        tuple val(sra_ids), path("*.bakta/*.tsv"), emit: tsv
+        tuple val(sra_ids), path("*.bakta/*.{faa,ffn,tsv,gff3,txt,log}")
 
     script:
+    def id_list = sra_ids.collect { "\"${it}\"" }.join(' ')
+    def contigs_map = sra_ids.withIndex().collect { id, i -> "contigs_${i+1}"}.join(' ')
     """
+    set +e
+    IDS=(${id_list})
+    CONTIGS=(${contigs_map})
+    N=\${#IDS[@]}
+
+    echo "=== BAKTA BATCH: \$N samples ==="
+    echo "Sample IDs: \${IDS[@]}"
+    echo "Contigs dirs: \${CONTIGS[@]}"
+
+    # Copy DB to memfs once
+    echo "\$(date -Iseconds) Copying bakta DB to memfs..."
     MEMFS_DB=\$MEMFS/db
-    echo \$MEMFS/db
     cp ${params.bakta_db} \$MEMFS_DB -r
+    echo "\$(date -Iseconds) DB copy complete"
 
-    bakta \
-    --db \$MEMFS_DB \
-    --output ${sra_id}.bakta \
-    --prefix ${sra_id} \
-    --threads ${task.cpus} \
-    --verbose \
-    --skip-trna \
-    --skip-tmrna \
-    --skip-rrna \
-    --skip-ncrna \
-    --skip-ncrna-region \
-    --skip-crispr \
-    --skip-pseudo \
-    --skip-gap \
-    --skip-ori \
-    --skip-filter \
-    --skip-plot \
-    --tmp-dir \$MEMFS \
-    ${contigs_fa}/final.contigs.fa &
-
-
-    # Watchdog loop to detect potential deadlocks in Diamond (which is used internally by Bakta) when running on the shared cluster with memfs.
-    # If all threads of the Diamond process are stuck in a futex wait for 3 consecutive checks (90 seconds), we assume a deadlock and kill the entire Bakta process to trigger a retry.
-    BAKTA_PID=\$!
-    STREAK=0
     WLOG=${params.outdir}/watchdog.log
-    while kill -0 \$BAKTA_PID 2>/dev/null; do
-        sleep 30
-        DPID=\$(for p in \$(pgrep -f diamond 2>/dev/null); do
-            [ "\$(dirname \$(readlink /proc/\$p/cwd 2>/dev/null))" = "\$MEMFS" ] && echo \$p && break
-        done)
-        if [ -n "\$DPID" ] && [ -d /proc/\$DPID/task ]; then
-            TOTAL=\$(ls /proc/\$DPID/task/ 2>/dev/null | wc -l)
-            STUCK=\$(for t in /proc/\$DPID/task/*/wchan; do cat "\$t" 2>/dev/null; echo; done \
-                    | grep -c "^futex" || true)
-            if [ "\$TOTAL" -ge 2 ] && [ "\$STUCK" -eq "\$TOTAL" ]; then
-                STREAK=\$((STREAK + 1))
-                echo "\$(date -Iseconds) [watchdog:${sra_id}:\$SLURM_JOB_ID] deadlock streak=\$STREAK/3 (PID=\$DPID threads=\$TOTAL)" | tee -a \$WLOG
-                if [ "\$STREAK" -ge 3 ]; then
-                    echo "\$(date -Iseconds) [watchdog:${sra_id}:\$SLURM_JOB_ID] confirmed deadlock — killing bakta" | tee -a \$WLOG
-                    kill \$BAKTA_PID 2>/dev/null
-                    sleep 3; kill -9 \$BAKTA_PID 2>/dev/null || true
-                    exit 1
+    mkdir -p \$(dirname \$WLOG)
+    touch \$WLOG || true
+
+    # Per-instance bakta + deadlock watchdog.
+    # Uses parent-PID association (pgrep -P) instead of CWD-based detection,
+    # because all instances share the same \$MEMFS directory.
+    run_bakta_with_watchdog() {
+        local SRA=\$1
+        local CTG=\$2
+
+        bakta \\
+            --db \$MEMFS_DB \\
+            --output \${SRA}.bakta \\
+            --prefix \$SRA \\
+            --threads 2 \\
+            --verbose \\
+            --skip-trna \\
+            --skip-tmrna \\
+            --skip-rrna \\
+            --skip-ncrna \\
+            --skip-ncrna-region \\
+            --skip-crispr \\
+            --skip-pseudo \\
+            --skip-gap \\
+            --skip-ori \\
+            --skip-filter \\
+            --skip-plot \\
+            --meta \\
+            --tmp-dir \$MEMFS \\
+            \$CTG/final.contigs.fa \\
+            > \${SRA}.bakta.stdout.log 2>&1 &
+
+        local BAKTA_PID=\$!
+        echo "\$(date -Iseconds) bakta \$SRA started with PID \$BAKTA_PID"
+
+        local STREAK=0
+        while kill -0 \$BAKTA_PID 2>/dev/null; do
+            sleep 30
+            # Find diamond that is a direct child of THIS bakta instance
+            local DPID=\$(pgrep -P \$BAKTA_PID -f diamond 2>/dev/null | head -1)
+            if [ -n "\$DPID" ] && [ -d /proc/\$DPID/task ]; then
+                local TOTAL=\$(ls /proc/\$DPID/task/ 2>/dev/null | wc -l)
+                local STUCK=\$(for t in /proc/\$DPID/task/*/wchan; do cat "\$t" 2>/dev/null; echo; done | grep -c "^futex" || true)
+                if [ "\$TOTAL" -ge 2 ] && [ "\$STUCK" -eq "\$TOTAL" ]; then
+                    STREAK=\$((STREAK + 1))
+                    echo "\$(date -Iseconds) [watchdog:\$SRA:\$SLURM_JOB_ID] deadlock streak=\$STREAK/3 (PID=\$DPID threads=\$TOTAL)" | tee -a \$WLOG
+                    if [ "\$STREAK" -ge 3 ]; then
+                        echo "\$(date -Iseconds) [watchdog:\$SRA:\$SLURM_JOB_ID] confirmed deadlock — killing bakta PID \$BAKTA_PID" | tee -a \$WLOG
+                        kill \$BAKTA_PID 2>/dev/null
+                        sleep 3; kill -9 \$BAKTA_PID 2>/dev/null || true
+                        wait \$BAKTA_PID 2>/dev/null
+                        return 12
+                    fi
+                else
+                    STREAK=0
                 fi
-            else
-                STREAK=0
             fi
+        done
+
+        wait \$BAKTA_PID
+        return \$?
+    }
+
+    # Launch all bakta instances with per-instance watchdogs
+    PIDS=()
+    for i in \$(seq 0 \$((N-1))); do
+        SRA=\${IDS[\$i]}
+        CTG=\${CONTIGS[\$i]}
+        echo "\$(date -Iseconds) Starting bakta+watchdog for \$SRA (contigs: \$CTG)"
+        run_bakta_with_watchdog "\$SRA" "\$CTG" &
+        PIDS+=(\$!)
+    done
+
+    echo "\$(date -Iseconds) Waiting for \${#PIDS[@]} bakta+watchdog processes..."
+
+    # Wait for all and collect exit codes
+    FAILURES=0
+    WATCHDOG_KILLS=0
+    for i in \$(seq 0 \$((N-1))); do
+        wait \${PIDS[\$i]}
+        EC=\$?
+        echo "\$(date -Iseconds) bakta \${IDS[\$i]} finished with exit code \$EC"
+        if [ \$EC -eq 12 ]; then
+            WATCHDOG_KILLS=\$((WATCHDOG_KILLS+1))
+            FAILURES=\$((FAILURES+1))
+        elif [ \$EC -ne 0 ]; then
+            FAILURES=\$((FAILURES+1))
         fi
     done
-    wait \$BAKTA_PID
 
+    echo "\$(date -Iseconds) All bakta finished. Failures: \$FAILURES/\$N (watchdog kills: \$WATCHDOG_KILLS)"
+
+    # Cleanup memfs
     rm -rf \$MEMFS/db
-    ln -s ${sra_id}.bakta/* .
+
+    set -e
     """
 }
 
