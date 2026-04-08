@@ -183,7 +183,7 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sra_id"
-    publishDir "$params.outdir/published/03_non_human_reads/$sra_id/logs", mode: 'copy', pattern: ".command*"
+    publishDir "$params.outdir/published/03_non_human_reads/$sra_id/logs", mode: 'copy', pattern: ".command*"  // do not try for the 3rd time to use move here, because it results in broken links O.O
     afterScript "D=${params.outdir}/published/03_non_human_reads/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bowtie2"
 
@@ -221,7 +221,7 @@ process REMOVE_HUMAN_READS {
 
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: $sra_id"
-    publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'move', pattern: "final.contigs.fa"
+    publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'copy', pattern: "final.contigs.fa"
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id/logs", mode: 'copy', pattern: "{.command*,log,options.json}"
     afterScript "D=${params.outdir}/published/04_shared_assembly/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "megahit"
@@ -437,7 +437,7 @@ process BAKTA_BATCH {
 
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${sra_id}"
-    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}", mode: 'move', pattern: "${sra_id}_clustered_catalog.fna"
+    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}", mode: 'copy', pattern: "${sra_id}_clustered_catalog.fna"
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${sra_id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_2/02_gene_catalog/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
@@ -471,7 +471,7 @@ process ALIGN_AND_QUANTIFY_READS {
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     cpus 16
-    memory "60 GB"
+    memory "40 GB"
 
     input:
         tuple val(sra_id), path(reads), path(index_files)
@@ -484,7 +484,7 @@ process ALIGN_AND_QUANTIFY_READS {
     // Find the .fna file in the index file list to use as the base for alignment
     def index_base = index_files.find { it.name.endsWith('.fna') }
     def sorted_bam = "${sra_id}.bam"
-
+    //TODO samtools sort -m 4G ???
     if (reads.size() == 2) {
         """
         bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
@@ -606,7 +606,7 @@ process MAP_FOR_BINNING {
     conda "bowtie2 samtools"
 
     cpus 20
-    memory "60 GB"
+    memory "30 GB"
 
     input:
         tuple val(sra_id), path(reads), path(megahit_dir)
@@ -664,7 +664,7 @@ process CHECKM_QA {
     conda "checkm2"
 
     cpus 8
-    memory "180 GB"
+    memory "50 GB"
     queue 'plgrid'
     clusterOptions '-A plggutmap100k-cpu -C memfs'
 
@@ -695,7 +695,7 @@ process FILTER_AND_ANNOTATE {
     conda "python=3.12 gtdbtk pandas"
 
     cpus 20
-    memory "100 GB"
+    memory "140 GB"
 
     input:
         tuple val(sra_id), path(bins_dir), path(checkm_summary)
