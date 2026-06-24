@@ -175,13 +175,13 @@ for (( i=1; i<=N_BATCHES; i++ )); do
         echo "[WARN] sizing job failed (rc=$?) — continuing"
     fi
 
-     # Clean up work dir to free scratch space (runs between batches if enabled)
-     if [ -d "$WORK_DIR" ]; then
-         echo "Cleaning up $WORK_DIR ..."
-         rm -rf "$WORK_DIR"
-         nextflow clean -f || true
-         echo "[OK] cleanup done"
-     fi
+    # Clean up work dir to free scratch space (runs between batches if enabled)
+    if [ -d "$WORK_DIR" ]; then
+        echo "Cleaning up $WORK_DIR ..."
+        rm -rf "$WORK_DIR"
+        nextflow clean -f || true
+        echo "[OK] cleanup done"
+    fi
 done
 
 echo
