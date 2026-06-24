@@ -242,14 +242,14 @@ process MEGAHIT_ASSEMBLY {
     script:
     if (reads.size() == 2) {
         """
-        megahit -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        megahit -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
         ln -s ${sra_id}_megahit_out/log log
         ln -s ${sra_id}_megahit_out/options.json options.json
         """
     } else {
         """
-        megahit -r ${reads[0]} -o ${sra_id}_megahit_out -t ${task.cpus} --min-contig-len 1500
+        megahit -r ${reads[0]} -o ${sra_id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
         ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
         ln -s ${sra_id}_megahit_out/log log
         ln -s ${sra_id}_megahit_out/options.json options.json
