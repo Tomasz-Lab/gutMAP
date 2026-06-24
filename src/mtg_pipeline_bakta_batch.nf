@@ -66,10 +66,9 @@ workflow {
     ch_bakta_input = ch_assembly
         .buffer(size: params.bakta_batch_size ?: 5, remainder: true)
         .map { batch ->
-            tuple(
-                batch.collect { it[0] },
-                batch.collect { it[1] }
-            )
+            def ids = batch.collect { it[0] }
+            log.info "BAKTA_BATCH queued: ${ids.size()} samples [${ids.first()}..${ids.last()}]: ${ids.join(';')}"
+            tuple(ids, batch.collect { it[1] })
         }
 
     BAKTA_BATCH(ch_bakta_input)
@@ -289,8 +288,9 @@ process SYLPH_TAXONOMY {
 // =======================================================
 // --- BRANCH 2 PROCESSES ---
 
+// TODO make it so a batch takes more samples than can be run concurrently to improve effiency
 process BAKTA_BATCH {
-    tag "BaktaBatch: ${sra_ids.size()} samples: ${sra_ids.join('-')}"
+    tag "BaktaBatch: ${sra_ids.size()} [${sra_ids.first()}..${sra_ids.last()}]"
     afterScript """
     for SRA in ${sra_ids.join(' ')}; do
         D=${params.outdir}/published/branch_2/01_annotation/\$SRA
@@ -302,10 +302,10 @@ process BAKTA_BATCH {
     done
     """
     conda "bakta ncbi-amrfinderplus"
-    cpus 40
-    memory '280 GB'
-    queue 'plgrid'
-    clusterOptions '-A plggutmap100k-cpu -C memfs'
+    cpus { Math.min(sra_ids.size() * 5, 100) }
+    memory { "${100 + sra_ids.size() * 15} GB" }
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem -C memfs'
     time 10.h
 
     input:
@@ -340,8 +340,6 @@ process BAKTA_BATCH {
     touch \$WLOG || true
 
     # Per-instance bakta + deadlock watchdog.
-    # Uses parent-PID association (pgrep -P) instead of CWD-based detection,
-    # because all instances share the same \$MEMFS directory.
     run_bakta_with_watchdog() {
         local SRA=\$1
         local CTG=\$2
@@ -350,7 +348,7 @@ process BAKTA_BATCH {
             --db \$MEMFS_DB \\
             --output \${SRA}.bakta \\
             --prefix \$SRA \\
-            --threads 2 \\
+            --threads 9 \\
             --verbose \\
             --skip-trna \\
             --skip-tmrna \\
