@@ -125,7 +125,7 @@ process CHECK_AND_CONVERT_READS {
     tag "fasterq-dump: $sra_id"
     conda "kingfisher"  // kingfisher includes fasterq-dump
     cpus 8
-    memory "30 GB"
+    memory "20 GB"
 
     input:
         tuple val(sra_id), path(sra_file)
@@ -187,7 +187,7 @@ process REMOVE_HUMAN_READS {
     conda "bowtie2"
 
     cpus 16
-    memory "30 GB"
+    memory "32 GB"
 
     input:
         tuple val(sra_id), path(reads)
@@ -226,7 +226,10 @@ process MEGAHIT_ASSEMBLY {
     conda "megahit"
 
     cpus 20
-    memory "30 GB"
+    memory "40 GB"
+
+    queue 'plgrid'
+    clusterOptions '-A plggutmap100k-cpu -C memfs'
 
     input:
         tuple val(sra_id), path(reads)
@@ -266,6 +269,9 @@ process SYLPH_TAXONOMY {
 
     cpus 2
     memory "40 GB"
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem'
+
     input:
         tuple val(sra_id), path(reads)
 
@@ -603,8 +609,8 @@ process MAP_FOR_BINNING {
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bowtie2 samtools"
 
-    cpus 20
-    memory "30 GB"
+    cpus 30
+    memory "60 GB"
 
     input:
         tuple val(sra_id), path(reads), path(megahit_dir)
@@ -661,10 +667,10 @@ process CHECKM_QA {
     afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* checkm2.log \$D/ 2>/dev/null || true"
     conda "checkm2"
 
-    cpus 8
+    cpus 12
     memory "50 GB"
-    queue 'plgrid'
-    clusterOptions '-A plggutmap100k-cpu -C memfs'
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem -C memfs'
 
     input:
         tuple val(sra_id), path(bins_dir)
@@ -692,8 +698,14 @@ process FILTER_AND_ANNOTATE {
     afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
     conda "python=3.12 gtdbtk pandas"
 
-    cpus 20
-    memory "140 GB"
+    cpus { task.attempt == 1 ? 20 : 35 }
+    memory { task.attempt == 1 ? "80 GB" : "140 GB" }
+
+    errorStrategy { task.attempt <=1 ? 'retry' : 'ignore' }
+    maxRetries 1
+
+    queue 'plgrid-bigmem'
+    clusterOptions '-A plggutmap100k-cpu-bigmem'
 
     input:
         tuple val(sra_id), path(bins_dir), path(checkm_summary)
