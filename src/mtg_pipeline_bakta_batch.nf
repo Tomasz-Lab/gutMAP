@@ -488,7 +488,7 @@ process ALIGN_AND_QUANTIFY_READS {
     // Find the .fna file in the index file list to use as the base for alignment
     def index_base = index_files.find { it.name.endsWith('.fna') }
     def sorted_bam = "${sra_id}.bam"
-    //TODO samtools sort -m 4G ???
+    // samtools sort -m 4G ???
     if (reads.size() == 2) {
         """
         bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
@@ -620,19 +620,16 @@ process MAP_FOR_BINNING {
         tuple val(sra_id), path(".command*")
 
     script:
-    def contigs = "${megahit_dir}/final.contigs.fa"
-
-    if (reads.size() == 2) {
-        """
-        bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-        bowtie2 -x ${sra_id}.assembly.idx -1 ${reads[0]} -2 ${reads[1]} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
-        """
-    } else {
-        """
-        bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
-        bowtie2 -x ${sra_id}.assembly.idx -U ${reads[0]} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
-        """
-    }
+    def contigs    = "${megahit_dir}/final.contigs.fa"
+    def reads_args = reads.size() == 2 ? "-1 ${reads[0]} -2 ${reads[1]}" : "-U ${reads[0]}"
+    """
+    if [ ! -s ${contigs} ]; then
+        echo "FATAL: ${contigs} is empty or missing — MEGAHIT produced no assembly. Skipping mapping."
+        exit 23
+    fi
+    bowtie2-build --threads ${task.cpus} -f ${contigs} ${sra_id}.assembly.idx
+    bowtie2 -x ${sra_id}.assembly.idx ${reads_args} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${sra_id}.sorted.bam
+    """
 }
 
 process METABAT2_BINNING {
@@ -682,8 +679,16 @@ process CHECKM_QA {
         tuple val(sra_id), path(".command*")
 
     // ln -s is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
+    // Exit codes: 22 = no bins produced upstream (MetaBAT2 found nothing) — distinguishable in SLURM Exit field for downstream analysis.
     script:
     """
+    N_BINS=\$(find -L ${bins_dir} -maxdepth 1 -type f -name "*.fa" | wc -l)
+    echo "\$(date -Iseconds) CheckM input ${bins_dir}: \$N_BINS bin(s)"
+    if [ "\$N_BINS" -eq 0 ]; then
+        echo "FATAL: no bins in ${bins_dir} — MetaBAT2 produced none. Skipping CheckM."
+        exit 22
+    fi
+
     checkm2 predict --input ${bins_dir} --output-directory ${sra_id}_checkm2_out --threads ${task.cpus} -x fa
     ln -s ${sra_id}_checkm2_out/quality_report.tsv quality_report.tsv
     ln -s ${sra_id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
