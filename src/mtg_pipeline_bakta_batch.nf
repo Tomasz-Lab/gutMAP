@@ -159,9 +159,14 @@ process FASTP_QC {
         tuple val(sra_id), path(".command*")
 
     script:
-    if (reads.size() == 2) {
+    def files = reads instanceof List ? reads : [reads]
+    def r1 = files.find { it.name.endsWith('_1.fastq') || it.name.endsWith('_1.fastq.gz') }
+    def r2 = files.find { it.name.endsWith('_2.fastq') || it.name.endsWith('_2.fastq.gz') }
+    def se = files.find { it.name == sra_id + '.fastq' || it.name == sra_id + '.fastq.gz' }
+
+    if (r1 && r2) {
         """
-        fastp --in1 ${reads[0]} --in2 ${reads[1]} \
+        fastp --in1 ${r1} --in2 ${r2} \
               --out1 ${sra_id}_1.trimmed.fastq \
               --out2 ${sra_id}_2.trimmed.fastq \
               --html ${sra_id}.fastp.html \
@@ -169,14 +174,16 @@ process FASTP_QC {
               --thread ${task.cpus} \
               --detect_adapter_for_pe
         """
-    } else {
+    } else if (se && !r1 && !r2) {
         """
-        fastp -i ${reads[0]} \
+        fastp -i ${se} \
               -o ${sra_id}.trimmed.fastq \
               --html ${sra_id}.fastp.html \
               --json ${sra_id}.fastp.json \
-              --thread ${task.cpus} \
+              --thread ${task.cpus}
         """
+    } else {
+        error "FASTP_QC ${sra_id}: unexpected read files ${files*.name}"
     }
 }
 
