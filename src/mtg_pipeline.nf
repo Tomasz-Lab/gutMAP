@@ -184,25 +184,16 @@ process REMOVE_HUMAN_READS {
         tuple val(sra_id), path(".command*")
 
     script:
-    if (reads.size() == 2) {
-        """
-        bowtie2 -x ${params.bowtie2_hg38_index} \
-                -1 ${reads[0]} -2 ${reads[1]} \
-                --threads ${task.cpus} \
-                --very-sensitive-local \
-                --un-conc ${sra_id}.nonhuman.fastq \
-                -S /dev/null
-        """
-    } else {
-        """
-        bowtie2 -x ${params.bowtie2_hg38_index} \
-                -U ${reads[0]} \
-                --threads ${task.cpus} \
-                --very-sensitive-local \
-                --un ${sra_id}.nonhuman.fastq \
-                -S /dev/null
-        """
-    }
+    def reads_args = reads.size() == 2 ? "-1 ${reads[0]} -2 ${reads[1]}" : "-U ${reads[0]}"
+    def unaligned  = reads.size() == 2 ? "--un-conc" : "--un"
+    """
+    bowtie2 -x ${params.bowtie2_hg38_index} \
+            ${reads_args} \
+            --threads ${task.cpus} \
+            --very-sensitive-local \
+            ${unaligned} ${sra_id}.nonhuman.fastq \
+            -S /dev/null
+    """
 }
 
 process MEGAHIT_ASSEMBLY {
@@ -257,15 +248,10 @@ process SYLPH_TAXONOMY {
         tuple val(sra_id), path(".command*")
 
     script:
-    if (reads.size() == 2) {
-        """
-        sylph profile ${params.sylph_db} -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
-        """
-    } else {
-        """
-        sylph profile ${params.sylph_db} -r ${reads[0]} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
-        """
-    }
+    def reads_args = reads.size() == 2 ? "-1 ${reads[0]} -2 ${reads[1]}" : "-r ${reads[0]}"
+    """
+    sylph profile ${params.sylph_db} ${reads_args} -o ${sra_id}.sylph_profile.tsv -p ${task.cpus}
+    """
 }
 
 // =======================================================
@@ -368,19 +354,12 @@ process ALIGN_AND_QUANTIFY_READS {
     def index_base = index_files.find { it.name.endsWith('.fna') }
     def sorted_bam = "${sra_id}.bam"
     // samtools sort -m 4G ???
-    if (reads.size() == 2) {
-        """
-        bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} ${reads[1]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
-        samtools index --threads ${task.cpus} ${sorted_bam}
-        samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
-        """
-    } else {
-        """
-        bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads[0]} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
-        samtools index --threads ${task.cpus} ${sorted_bam}
-        samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
-        """
-    }
+    def reads_args = reads.size() == 2 ? "${reads[0]} ${reads[1]}" : "${reads[0]}"
+    """
+    bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads_args} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
+    samtools index --threads ${task.cpus} ${sorted_bam}
+    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${sra_id}.idxstats.txt
+    """
 }
 
 process CALCULATE_TPM_AND_ANNOTATE {
