@@ -100,6 +100,8 @@ workflow {
 
 process CHECK_AND_CONVERT_READS {
     tag "fasterq-dump: $sra_id"
+    publishDir "$params.outdir/published/01_check_and_convert/$sra_id/logs", mode: 'copy', pattern: ".command*"
+    afterScript "D=${params.outdir}/published/01_check_and_convert/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "kingfisher"  // kingfisher includes fasterq-dump
     cpus 8
     memory "20 GB"
@@ -109,6 +111,7 @@ process CHECK_AND_CONVERT_READS {
 
     output:
         tuple val(sra_id), path("*.fastq"), emit: fastq
+        tuple val(sra_id), path(".command*")
 
     script:
     """
