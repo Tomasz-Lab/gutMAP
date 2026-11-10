@@ -62,35 +62,12 @@ workflow {
 
     // =======================================================
     // --- BRANCH 2: Gene Catalog and Gene Abundance ---
-    // Batch all assemblies into a single BAKTA job
-    ch_bakta_input = ch_assembly
-        .buffer(size: params.bakta_batch_size ?: 5, remainder: true)
-        .map { batch ->
-            def ids = batch.collect { it[0] }
-            log.info "BAKTA_BATCH queued: ${ids.size()} samples [${ids.first()}..${ids.last()}]: ${ids.join(';')}"
-            tuple(ids, batch.collect { it[1] })
-        }
-
-    BAKTA_BATCH(ch_bakta_input)
-
-    // Flatten batch outputs back to per-sample tuples
-    ch_bakta_ffn = BAKTA_BATCH.out.nucleotides.flatMap { ids, files ->
-        ids.collect { id ->
-            def f = files.find { f -> f.name == "${id}.ffn" }
-            f != null ? tuple(id, f) : null
-        }.findAll()
-    }
-    ch_bakta_tsv = BAKTA_BATCH.out.tsv.flatMap { ids, files ->
-        ids.collect { id ->
-            def f = files.find { f -> f.name == "${id}.tsv" }
-            f != null ? tuple(id, f) : null
-        }.findAll()
-    }
+    BAKTA_ANNOTATION(ch_assembly)
 
     // Create a combined channel with the required inputs for catalog creation
     ch_for_catalog_creation = ch_non_human_reads
-        .join(ch_bakta_ffn)
-        .join(ch_bakta_tsv)
+        .join(BAKTA_ANNOTATION.out.nucleotides)
+        .join(BAKTA_ANNOTATION.out.tsv)
 
     CREATE_CATALOG_AND_INDEX(ch_for_catalog_creation)
 
@@ -102,7 +79,7 @@ workflow {
 
     // Combine the read counts with the original tsv for final annotation
     ch_for_annotation = ALIGN_AND_QUANTIFY_READS.out.idxstats
-        .join(ch_bakta_tsv)
+        .join(BAKTA_ANNOTATION.out.tsv)
 
     CALCULATE_TPM_AND_ANNOTATE(ch_for_annotation)
     // =======================================================
@@ -301,92 +278,50 @@ process SYLPH_TAXONOMY {
 // =======================================================
 // --- BRANCH 2 PROCESSES ---
 
-// TODO make it so a batch takes more samples than can be run concurrently to improve effiency
-process BAKTA_BATCH {
-    tag "BaktaBatch: ${sra_ids.size()} [${sra_ids.first()}..${sra_ids.last()}]"
+process BAKTA_ANNOTATION {
+    tag "Bakta: $sra_id"
     afterScript """
-    for SRA in ${sra_ids.join(' ')}; do
-        D=${params.outdir}/published/branch_2/01_annotation/\$SRA
-        mkdir -p \$D \$D/logs
-        cp -f \${SRA}.bakta/\${SRA}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
-        cp -f \${SRA}.bakta/\${SRA}.log \$D/logs/ 2>/dev/null || true
-        cp -f \${SRA}.bakta.stdout.log \$D/logs/ 2>/dev/null || true
-        cp -f ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
-    done
+    D=${params.outdir}/published/branch_2/01_annotation/${sra_id}
+    mkdir -p \$D/logs
+    cp -f ${sra_id}.bakta/${sra_id}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
+    cp -f ${sra_id}.bakta/${sra_id}.log ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
     """
     conda "bakta ncbi-amrfinderplus"
-    cpus { Math.min(sra_ids.size() * 5, 100) }
-    memory { "${100 + sra_ids.size() * 15} GB" }
+    cpus 5
+    memory "20 GB"
     queue 'plgrid-bigmem'
     clusterOptions '-A plggutmap100k-cpu-bigmem'
     time 10.h
 
     input:
-        tuple val(sra_ids), path("contigs_*")
+        tuple val(sra_id), path(assembly)
 
     output:
-        tuple val(sra_ids), path("*.bakta/*.ffn"), emit: nucleotides
-        tuple val(sra_ids), path("*.bakta/*.tsv"), emit: tsv
-        tuple val(sra_ids), path("*.bakta/*.{faa,ffn,tsv,gff3,txt,log}")
+        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.ffn"), emit: nucleotides
+        tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.tsv"), emit: tsv
 
     script:
-    def id_list = sra_ids.collect { "\"${it}\"" }.join(' ')
-    def contigs_map = sra_ids.withIndex().collect { id, i -> "contigs_${i+1}"}.join(' ')
     """
-    set +e
-    IDS=(${id_list})
-    CONTIGS=(${contigs_map})
-    N=\${#IDS[@]}
-
-    echo "=== BAKTA BATCH: \$N samples ==="
-    echo "Sample IDs: \${IDS[@]}"
-    echo "Contigs dirs: \${CONTIGS[@]}"
-
-    PIDS=()
-    for i in \$(seq 0 \$((N-1))); do
-        SRA=\${IDS[\$i]}
-        CTG=\${CONTIGS[\$i]}
-        echo "\$(date -Iseconds) Starting bakta for \$SRA (contigs: \$CTG)"
-        bakta \\
-            --db ${params.bakta_db} \\
-            --output \${SRA}.bakta \\
-            --prefix \$SRA \\
-            --threads 9 \\
-            --verbose \\
-            --skip-trna \\
-            --skip-tmrna \\
-            --skip-rrna \\
-            --skip-ncrna \\
-            --skip-ncrna-region \\
-            --skip-crispr \\
-            --skip-pseudo \\
-            --skip-gap \\
-            --skip-ori \\
-            --skip-filter \\
-            --skip-plot \\
-            --meta \\
-            --tmp-dir \$PWD \\
-            \$CTG/final.contigs.fa \\
-            > \${SRA}.bakta.stdout.log 2>&1 &
-        PIDS+=(\$!)
-    done
-
-    echo "\$(date -Iseconds) Waiting for \${#PIDS[@]} bakta processes..."
-
-    # Wait for all and collect exit codes
-    FAILURES=0
-    for i in \$(seq 0 \$((N-1))); do
-        wait \${PIDS[\$i]}
-        EC=\$?
-        echo "\$(date -Iseconds) bakta \${IDS[\$i]} finished with exit code \$EC"
-        if [ \$EC -ne 0 ]; then
-            FAILURES=\$((FAILURES+1))
-        fi
-    done
-
-    echo "\$(date -Iseconds) All bakta finished. Failures: \$FAILURES/\$N"
-
-    set -e
+    bakta \\
+        --db ${params.bakta_db} \\
+        --output ${sra_id}.bakta \\
+        --prefix ${sra_id} \\
+        --threads ${task.cpus} \\
+        --verbose \\
+        --skip-trna \\
+        --skip-tmrna \\
+        --skip-rrna \\
+        --skip-ncrna \\
+        --skip-ncrna-region \\
+        --skip-crispr \\
+        --skip-pseudo \\
+        --skip-gap \\
+        --skip-ori \\
+        --skip-filter \\
+        --skip-plot \\
+        --meta \\
+        --tmp-dir \$PWD \\
+        ${assembly}/final.contigs.fa
     """
 }
 
