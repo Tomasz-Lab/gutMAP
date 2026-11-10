@@ -111,7 +111,6 @@ workflow {
 
 process CHECK_AND_CONVERT_READS {
     tag "fasterq-dump: ${meta.id}"
-    publishDir "$params.outdir/published/01_check_and_convert/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "kingfisher"  // kingfisher includes fasterq-dump
     cpus 8
@@ -122,7 +121,6 @@ process CHECK_AND_CONVERT_READS {
 
     output:
         tuple val(meta), path("*.fastq"), emit: fastq
-        tuple val(meta), path(".command*")
 
     script:
     """
@@ -133,7 +131,6 @@ process CHECK_AND_CONVERT_READS {
 process FASTP_QC {
     tag "fastp: ${meta.id}"
     publishDir "$params.outdir/published/02_fastp_qc/${meta.id}", mode: 'copy', pattern: "{*.json,*.html}"
-    publishDir "$params.outdir/published/02_fastp_qc/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "fastp"
 
@@ -147,7 +144,6 @@ process FASTP_QC {
         tuple val(meta), path("*.trimmed.fastq"), emit: reads
         tuple val(meta), path("*.html"), emit: html_report
         tuple val(meta), path("*.json"), emit: json_report
-        tuple val(meta), path(".command*")
 
     script:
     def in_args  = meta.single_end ? "-i ${reads}" : "--in1 *_1.fastq* --in2 *_2.fastq* --detect_adapter_for_pe"
@@ -162,7 +158,6 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: ${meta.id}"
-    publishDir "$params.outdir/published/03_non_human_reads/${meta.id}/logs", mode: 'copy', pattern: ".command*"  // do not try for the 3rd time to use move here, because it results in broken links O.O
     afterScript "D=${params.outdir}/published/03_non_human_reads/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bowtie2"
 
@@ -174,7 +169,6 @@ process REMOVE_HUMAN_READS {
 
     output:
         tuple val(meta), path("${meta.id}.nonhuman*.fastq"), emit: reads
-        tuple val(meta), path(".command*")
 
     script:
     def reads_args = meta.single_end ? "-U ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
@@ -192,8 +186,7 @@ process REMOVE_HUMAN_READS {
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: ${meta.id}"
     publishDir "$params.outdir/published/04_shared_assembly/${meta.id}", mode: 'copy', pattern: "final.contigs.fa"
-    publishDir "$params.outdir/published/04_shared_assembly/${meta.id}/logs", mode: 'copy', pattern: "{.command*,log,options.json}"
-    afterScript "D=${params.outdir}/published/04_shared_assembly/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/04_shared_assembly/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* log options.json \$D/ 2>/dev/null || true"
     conda "megahit"
 
     cpus 20
@@ -207,8 +200,6 @@ process MEGAHIT_ASSEMBLY {
 
     output:
         tuple val(meta), path("final.contigs.fa"), emit: contigs
-        tuple val(meta), path("{log,options.json}")
-        tuple val(meta), path(".command*")
 
     script:
     def reads_args = meta.single_end ? "-r ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
@@ -224,7 +215,6 @@ process MEGAHIT_ASSEMBLY {
 process SYLPH_TAXONOMY {
     tag "Sylph: ${meta.id}"
     publishDir "$params.outdir/published/branch_1/01_taxonomy/${meta.id}", mode: 'copy', pattern: "${meta.id}.sylph_profile.tsv"
-    publishDir "$params.outdir/published/branch_1/01_taxonomy/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "sylph"
 
@@ -238,7 +228,6 @@ process SYLPH_TAXONOMY {
 
     output:
         tuple val(meta), path("${meta.id}.sylph_profile.tsv"), emit: sylph_profile
-        tuple val(meta), path(".command*")
 
     script:
     def reads_args = meta.single_end ? "-r ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
@@ -300,7 +289,6 @@ process BAKTA_ANNOTATION {
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'copy', pattern: "${meta.id}_clustered_catalog.fna"
-    publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_2/02_gene_catalog/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
@@ -312,7 +300,6 @@ process CREATE_CATALOG_AND_INDEX {
 
     output:
         tuple val(meta), path("${meta.id}_clustered_catalog.fna*"), emit: index
-        tuple val(meta), path(".command*")
 
     script:
     def catalog_fna = "${meta.id}_clustered_catalog.fna"
@@ -328,7 +315,6 @@ process CREATE_CATALOG_AND_INDEX {
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'copy', pattern: "${meta.id}.idxstats.txt"
-    publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_2/03_gene_quantification/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
@@ -340,7 +326,6 @@ process ALIGN_AND_QUANTIFY_READS {
 
     output:
         tuple val(meta), path("${meta.id}.idxstats.txt"), emit: idxstats
-        tuple val(meta), path(".command*")
 
     script:
     // Find the .fna file in the index file list to use as the base for alignment
@@ -357,7 +342,6 @@ process ALIGN_AND_QUANTIFY_READS {
 process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
-    publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "pandas"
 
@@ -369,7 +353,6 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
     output:
         tuple val(meta), path("${meta.id}_gene_quantification.tsv"), emit: quantification
-        tuple val(meta), path(".command*")
 
     script:
         def merged_output = "${meta.id}_gene_quantification.tsv"
@@ -455,7 +438,6 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: ${meta.id}"
-    publishDir "$params.outdir/published/branch_3/01_mapping/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "bowtie2 samtools"
 
@@ -467,7 +449,6 @@ process MAP_FOR_BINNING {
 
     output:
         tuple val(meta), path("${meta.id}.sorted.bam"), path(contigs), emit: bam
-        tuple val(meta), path(".command*")
 
     script:
     def reads_args = meta.single_end ? "-U ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
@@ -483,7 +464,6 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: ${meta.id}"
-    publishDir "$params.outdir/published/branch_3/02_binning/${meta.id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_3/02_binning/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
     conda "metabat2"
 
@@ -495,7 +475,6 @@ process METABAT2_BINNING {
 
     output:
         tuple val(meta), path("${meta.id}_bins"), emit: bins
-        tuple val(meta), path(".command*")
 
     script:
     """
@@ -508,7 +487,6 @@ process METABAT2_BINNING {
 process CHECKM_QA {
     tag "CheckM: ${meta.id}"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/${meta.id}", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
-    publishDir "$params.outdir/published/branch_3/03_checkm_qa/${meta.id}/logs", mode: 'copy', pattern: "{.command*,checkm2.log}"
     afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* checkm2.log \$D/ 2>/dev/null || true"
     conda "checkm2"
 
@@ -523,8 +501,6 @@ process CHECKM_QA {
     output:
         tuple val(meta), path("quality_report.tsv"), emit: checkm_summary
         tuple val(meta), path("DIAMOND_RESULTS.tsv"), emit: diamond_results
-        tuple val(meta), path("checkm2.log")
-        tuple val(meta), path(".command*")
 
     // Exit codes: 22 = no bins produced upstream (MetaBAT2 found nothing) — distinguishable in SLURM Exit field for downstream analysis.
     script:
@@ -544,7 +520,6 @@ process CHECKM_QA {
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: ${meta.id}"
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/${meta.id}", mode: 'copy', pattern: '{*.tsv,hq_bins}' // move mode does not work and throws java.nio.file.DirectoryNotEmptyException for hq_bins
-    publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/${meta.id}/logs", mode: 'copy', pattern: '{.command*,gtdbtk.log,gtdbtk.json}'
     afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
     conda "python=3.12 gtdbtk pandas"
 
@@ -564,9 +539,6 @@ process FILTER_AND_ANNOTATE {
         tuple val(meta), path("hq_bins"), emit: hq_bins
         tuple val(meta), path("gtdbtk.bac120.summary.tsv"), emit: gtdbtk_summary, optional: true
         tuple val(meta), path("NO_HQ_BINS_FOUND.tsv"), emit: NO_HQ_BINS_FOUND, optional: true
-        tuple val(meta), path("gtdbtk.log"), optional: true
-        tuple val(meta), path("gtdbtk.json"), optional: true
-        tuple val(meta), path(".command*")
 
     script:
     def min_completeness = 90
