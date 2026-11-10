@@ -192,9 +192,6 @@ process MEGAHIT_ASSEMBLY {
     cpus 20
     memory "40 GB"
 
-    queue 'plgrid'
-    clusterOptions '-A plggutmap100k-cpu -C memfs'
-
     input:
         tuple val(meta), path(reads)
 
@@ -204,7 +201,7 @@ process MEGAHIT_ASSEMBLY {
     script:
     def reads_args = meta.single_end ? "-r ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
     """
-    megahit ${reads_args} -o ${meta.id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
+    megahit ${reads_args} -o ${meta.id}_megahit_out --tmp-dir \${MEMFS:-\$PWD} -t ${task.cpus} --min-contig-len 1500
     mv ${meta.id}_megahit_out/{final.contigs.fa,log,options.json} .
     """
 }
@@ -220,8 +217,6 @@ process SYLPH_TAXONOMY {
 
     cpus 2
     memory "40 GB"
-    queue 'plgrid-bigmem'
-    clusterOptions '-A plggutmap100k-cpu-bigmem'
 
     input:
         tuple val(meta), path(reads)
@@ -246,8 +241,6 @@ process BAKTA_ANNOTATION {
     conda "bioconda::bakta=1.12.2 bioconda::ncbi-amrfinderplus=4.2.7"
     cpus 5
     memory "20 GB"
-    queue 'plgrid-bigmem'
-    clusterOptions '-A plggutmap100k-cpu-bigmem'
     time 10.h
 
     input:
@@ -487,8 +480,6 @@ process CHECKM_QA {
 
     cpus 12
     memory "50 GB"
-    queue 'plgrid-bigmem'
-    clusterOptions '-A plggutmap100k-cpu-bigmem -C memfs'
 
     input:
         tuple val(meta), path(bins_dir)
@@ -523,9 +514,6 @@ process FILTER_AND_ANNOTATE {
 
     errorStrategy { task.attempt <=1 ? 'retry' : 'ignore' }
     maxRetries 1
-
-    queue 'plgrid-bigmem'
-    clusterOptions '-A plggutmap100k-cpu-bigmem'
 
     input:
         tuple val(meta), path(bins_dir), path(checkm_summary)
