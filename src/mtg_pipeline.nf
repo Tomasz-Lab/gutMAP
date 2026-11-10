@@ -150,32 +150,14 @@ process FASTP_QC {
         tuple val(meta), path(".command*")
 
     script:
-    def files = [reads].flatten()
-    def r1 = files.find { it.name.endsWith('_1.fastq') || it.name.endsWith('_1.fastq.gz') }
-    def r2 = files.find { it.name.endsWith('_2.fastq') || it.name.endsWith('_2.fastq.gz') }
-    def se = files.find { it.name == meta.id + '.fastq' || it.name == meta.id + '.fastq.gz' }
-
-    if (!meta.single_end && r1 && r2) {
-        """
-        fastp --in1 ${r1} --in2 ${r2} \
-              --out1 ${meta.id}_1.trimmed.fastq \
-              --out2 ${meta.id}_2.trimmed.fastq \
-              --html ${meta.id}.fastp.html \
-              --json ${meta.id}.fastp.json \
-              --thread ${task.cpus} \
-              --detect_adapter_for_pe
-        """
-    } else if (meta.single_end && se) {
-        """
-        fastp -i ${se} \
-              -o ${meta.id}.trimmed.fastq \
-              --html ${meta.id}.fastp.html \
-              --json ${meta.id}.fastp.json \
-              --thread ${task.cpus}
-        """
-    } else {
-        error "FASTP_QC ${meta.id}: unexpected read files ${files*.name}"
-    }
+    def in_args  = meta.single_end ? "-i ${reads}" : "--in1 *_1.fastq* --in2 *_2.fastq* --detect_adapter_for_pe"
+    def out_args = meta.single_end ? "-o ${meta.id}.trimmed.fastq" : "--out1 ${meta.id}_1.trimmed.fastq --out2 ${meta.id}_2.trimmed.fastq"
+    """
+    fastp ${in_args} ${out_args} \
+          --html ${meta.id}.fastp.html \
+          --json ${meta.id}.fastp.json \
+          --thread ${task.cpus}
+    """
 }
 
 process REMOVE_HUMAN_READS {
