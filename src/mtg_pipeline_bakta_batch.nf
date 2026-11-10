@@ -348,15 +348,11 @@ process BAKTA_BATCH {
     cp ${params.bakta_db} \$MEMFS_DB -r
     echo "\$(date -Iseconds) DB copy complete"
 
-    WLOG=${params.outdir}/watchdog.log
-    mkdir -p \$(dirname \$WLOG)
-    touch \$WLOG || true
-
-    # Per-instance bakta + deadlock watchdog.
-    run_bakta_with_watchdog() {
-        local SRA=\$1
-        local CTG=\$2
-
+    PIDS=()
+    for i in \$(seq 0 \$((N-1))); do
+        SRA=\${IDS[\$i]}
+        CTG=\${CONTIGS[\$i]}
+        echo "\$(date -Iseconds) Starting bakta for \$SRA (contigs: \$CTG)"
         bakta \\
             --db \$MEMFS_DB \\
             --output \${SRA}.bakta \\
@@ -378,66 +374,23 @@ process BAKTA_BATCH {
             --tmp-dir \$MEMFS \\
             \$CTG/final.contigs.fa \\
             > \${SRA}.bakta.stdout.log 2>&1 &
-
-        local BAKTA_PID=\$!
-        echo "\$(date -Iseconds) bakta \$SRA started with PID \$BAKTA_PID"
-
-        local STREAK=0
-        while kill -0 \$BAKTA_PID 2>/dev/null; do
-            sleep 30
-            # Find diamond that is a direct child of THIS bakta instance
-            local DPID=\$(pgrep -P \$BAKTA_PID -f diamond 2>/dev/null | head -1)
-            if [ -n "\$DPID" ] && [ -d /proc/\$DPID/task ]; then
-                local TOTAL=\$(ls /proc/\$DPID/task/ 2>/dev/null | wc -l)
-                local STUCK=\$(for t in /proc/\$DPID/task/*/wchan; do cat "\$t" 2>/dev/null; echo; done | grep -c "^futex" || true)
-                if [ "\$TOTAL" -ge 2 ] && [ "\$STUCK" -eq "\$TOTAL" ]; then
-                    STREAK=\$((STREAK + 1))
-                    echo "\$(date -Iseconds) [watchdog:\$SRA:\$SLURM_JOB_ID] deadlock streak=\$STREAK/3 (PID=\$DPID threads=\$TOTAL)" | tee -a \$WLOG
-                    if [ "\$STREAK" -ge 3 ]; then
-                        echo "\$(date -Iseconds) [watchdog:\$SRA:\$SLURM_JOB_ID] confirmed deadlock — killing bakta PID \$BAKTA_PID" | tee -a \$WLOG
-                        kill \$BAKTA_PID 2>/dev/null
-                        sleep 3; kill -9 \$BAKTA_PID 2>/dev/null || true
-                        wait \$BAKTA_PID 2>/dev/null
-                        return 12
-                    fi
-                else
-                    STREAK=0
-                fi
-            fi
-        done
-
-        wait \$BAKTA_PID
-        return \$?
-    }
-
-    # Launch all bakta instances with per-instance watchdogs
-    PIDS=()
-    for i in \$(seq 0 \$((N-1))); do
-        SRA=\${IDS[\$i]}
-        CTG=\${CONTIGS[\$i]}
-        echo "\$(date -Iseconds) Starting bakta+watchdog for \$SRA (contigs: \$CTG)"
-        run_bakta_with_watchdog "\$SRA" "\$CTG" &
         PIDS+=(\$!)
     done
 
-    echo "\$(date -Iseconds) Waiting for \${#PIDS[@]} bakta+watchdog processes..."
+    echo "\$(date -Iseconds) Waiting for \${#PIDS[@]} bakta processes..."
 
     # Wait for all and collect exit codes
     FAILURES=0
-    WATCHDOG_KILLS=0
     for i in \$(seq 0 \$((N-1))); do
         wait \${PIDS[\$i]}
         EC=\$?
         echo "\$(date -Iseconds) bakta \${IDS[\$i]} finished with exit code \$EC"
-        if [ \$EC -eq 12 ]; then
-            WATCHDOG_KILLS=\$((WATCHDOG_KILLS+1))
-            FAILURES=\$((FAILURES+1))
-        elif [ \$EC -ne 0 ]; then
+        if [ \$EC -ne 0 ]; then
             FAILURES=\$((FAILURES+1))
         fi
     done
 
-    echo "\$(date -Iseconds) All bakta finished. Failures: \$FAILURES/\$N (watchdog kills: \$WATCHDOG_KILLS)"
+    echo "\$(date -Iseconds) All bakta finished. Failures: \$FAILURES/\$N"
 
     # Cleanup memfs
     rm -rf \$MEMFS/db
