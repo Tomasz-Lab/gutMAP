@@ -526,7 +526,6 @@ process CHECKM_QA {
         tuple val(meta), path("checkm2.log")
         tuple val(meta), path(".command*")
 
-    // ln -s is to make pattern in publishDir work correctly, does not work when publishing from any subdirectory
     // Exit codes: 22 = no bins produced upstream (MetaBAT2 found nothing) — distinguishable in SLURM Exit field for downstream analysis.
     script:
     """
@@ -538,9 +537,7 @@ process CHECKM_QA {
     fi
 
     checkm2 predict --input ${bins_dir} --output-directory ${meta.id}_checkm2_out --threads ${task.cpus} -x fa
-    ln -s ${meta.id}_checkm2_out/quality_report.tsv quality_report.tsv
-    ln -s ${meta.id}_checkm2_out/diamond_output/DIAMOND_RESULTS.tsv DIAMOND_RESULTS.tsv
-    ln -s ${meta.id}_checkm2_out/checkm2.log checkm2.log
+    mv ${meta.id}_checkm2_out/{quality_report.tsv,checkm2.log,diamond_output/DIAMOND_RESULTS.tsv} .
     """
 }
 
