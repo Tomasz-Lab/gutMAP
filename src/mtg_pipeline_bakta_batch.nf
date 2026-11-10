@@ -62,7 +62,7 @@ workflow {
 
     // =======================================================
     // --- BRANCH 2: Gene Catalog and Gene Abundance ---
-    // Batch all assemblies into a single BAKTA job with shared memfs DB
+    // Batch all assemblies into a single BAKTA job
     ch_bakta_input = ch_assembly
         .buffer(size: params.bakta_batch_size ?: 5, remainder: true)
         .map { batch ->
@@ -318,7 +318,7 @@ process BAKTA_BATCH {
     cpus { Math.min(sra_ids.size() * 5, 100) }
     memory { "${100 + sra_ids.size() * 15} GB" }
     queue 'plgrid-bigmem'
-    clusterOptions '-A plggutmap100k-cpu-bigmem -C memfs'
+    clusterOptions '-A plggutmap100k-cpu-bigmem'
     time 10.h
 
     input:
@@ -342,19 +342,13 @@ process BAKTA_BATCH {
     echo "Sample IDs: \${IDS[@]}"
     echo "Contigs dirs: \${CONTIGS[@]}"
 
-    # Copy DB to memfs once
-    echo "\$(date -Iseconds) Copying bakta DB to memfs..."
-    MEMFS_DB=\$MEMFS/db
-    cp ${params.bakta_db} \$MEMFS_DB -r
-    echo "\$(date -Iseconds) DB copy complete"
-
     PIDS=()
     for i in \$(seq 0 \$((N-1))); do
         SRA=\${IDS[\$i]}
         CTG=\${CONTIGS[\$i]}
         echo "\$(date -Iseconds) Starting bakta for \$SRA (contigs: \$CTG)"
         bakta \\
-            --db \$MEMFS_DB \\
+            --db ${params.bakta_db} \\
             --output \${SRA}.bakta \\
             --prefix \$SRA \\
             --threads 9 \\
@@ -371,7 +365,7 @@ process BAKTA_BATCH {
             --skip-filter \\
             --skip-plot \\
             --meta \\
-            --tmp-dir \$MEMFS \\
+            --tmp-dir \$PWD \\
             \$CTG/final.contigs.fa \\
             > \${SRA}.bakta.stdout.log 2>&1 &
         PIDS+=(\$!)
@@ -391,9 +385,6 @@ process BAKTA_BATCH {
     done
 
     echo "\$(date -Iseconds) All bakta finished. Failures: \$FAILURES/\$N"
-
-    # Cleanup memfs
-    rm -rf \$MEMFS/db
 
     set -e
     """
