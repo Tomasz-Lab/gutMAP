@@ -111,7 +111,7 @@ workflow {
 
 process CHECK_AND_CONVERT_READS {
     tag "fasterq-dump: ${meta.id}"
-    afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "kingfisher"  // kingfisher includes fasterq-dump
     cpus 8
     memory "20 GB"
@@ -131,7 +131,7 @@ process CHECK_AND_CONVERT_READS {
 process FASTP_QC {
     tag "fastp: ${meta.id}"
     publishDir "$params.outdir/published/02_fastp_qc/${meta.id}", mode: 'copy', pattern: "{*.json,*.html}"
-    afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "fastp"
 
     cpus 6
@@ -158,7 +158,7 @@ process FASTP_QC {
 
 process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: ${meta.id}"
-    afterScript "D=${params.outdir}/published/03_non_human_reads/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/03_non_human_reads/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bowtie2"
 
     cpus 16
@@ -186,7 +186,7 @@ process REMOVE_HUMAN_READS {
 process MEGAHIT_ASSEMBLY {
     tag "MEGAHIT: ${meta.id}"
     publishDir "$params.outdir/published/04_shared_assembly/${meta.id}", mode: 'copy', pattern: "final.contigs.fa"
-    afterScript "D=${params.outdir}/published/04_shared_assembly/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* log options.json \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/04_shared_assembly/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} log options.json \$D/ 2>/dev/null || true"
     conda "megahit"
 
     cpus 20
@@ -215,7 +215,7 @@ process MEGAHIT_ASSEMBLY {
 process SYLPH_TAXONOMY {
     tag "Sylph: ${meta.id}"
     publishDir "$params.outdir/published/branch_1/01_taxonomy/${meta.id}", mode: 'copy', pattern: "${meta.id}.sylph_profile.tsv"
-    afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "sylph"
 
     cpus 2
@@ -245,7 +245,7 @@ process BAKTA_ANNOTATION {
     D=${params.outdir}/published/branch_2/01_annotation/${meta.id}
     mkdir -p \$D/logs
     cp -f ${meta.id}.bakta/${meta.id}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
-    cp -f ${meta.id}.bakta/${meta.id}.log ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
+    cp -f ${meta.id}.bakta/${meta.id}.log ${task.workDir}/.command.{sh,err,out,log} \$D/logs/ 2>/dev/null || true
     """
     conda "bioconda::bakta=1.12.2 bioconda::ncbi-amrfinderplus=4.2.7"
     cpus 5
@@ -289,7 +289,7 @@ process BAKTA_ANNOTATION {
 process CREATE_CATALOG_AND_INDEX {
     tag "Catalog & Index for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'copy', pattern: "${meta.id}_clustered_catalog.fna"
-    afterScript "D=${params.outdir}/published/branch_2/02_gene_catalog/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_2/02_gene_catalog/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
 
     cpus 4
@@ -315,7 +315,7 @@ process CREATE_CATALOG_AND_INDEX {
 process ALIGN_AND_QUANTIFY_READS {
     tag "Align & Count for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'copy', pattern: "${meta.id}.idxstats.txt"
-    afterScript "D=${params.outdir}/published/branch_2/03_gene_quantification/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_2/03_gene_quantification/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
 
     cpus 16
@@ -342,7 +342,7 @@ process ALIGN_AND_QUANTIFY_READS {
 process CALCULATE_TPM_AND_ANNOTATE {
     tag "TPM & Annotate for ${meta.id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
-    afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "pandas"
 
     cpus 1
@@ -438,7 +438,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 
 process MAP_FOR_BINNING {
     tag "Map for Binning: ${meta.id}"
-    afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bowtie2 samtools"
 
     cpus 30
@@ -464,7 +464,7 @@ process MAP_FOR_BINNING {
 
 process METABAT2_BINNING {
     tag "MetaBAT2 Binning: ${meta.id}"
-    afterScript "D=${params.outdir}/published/branch_3/02_binning/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_3/02_binning/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "metabat2"
 
     cpus 8
@@ -487,7 +487,7 @@ process METABAT2_BINNING {
 process CHECKM_QA {
     tag "CheckM: ${meta.id}"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/${meta.id}", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
-    afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* checkm2.log \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} checkm2.log \$D/ 2>/dev/null || true"
     conda "checkm2"
 
     cpus 12
@@ -520,7 +520,7 @@ process CHECKM_QA {
 process FILTER_AND_ANNOTATE {
     tag "Filter & Annotate GTDB-Tk: ${meta.id}"
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/${meta.id}", mode: 'copy', pattern: '{*.tsv,hq_bins}' // move mode does not work and throws java.nio.file.DirectoryNotEmptyException for hq_bins
-    afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
+    afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
     conda "python=3.12 gtdbtk pandas"
 
     cpus { task.attempt == 1 ? 20 : 35 }
