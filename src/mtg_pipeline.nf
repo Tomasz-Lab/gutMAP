@@ -268,7 +268,6 @@ process BAKTA_ANNOTATION {
         --output ${meta.id}.bakta \\
         --prefix ${meta.id} \\
         --threads ${task.cpus} \\
-        --verbose \\
         --skip-trna \\
         --skip-tmrna \\
         --skip-rrna \\
