@@ -1,11 +1,6 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-log.info """
-         M E T A G E N O M I C S - P I P E L I N E
-         =========================================
-         """
-
 def withLayout(meta, reads) {
     def names = [reads].flatten()*.name
     def single_end = !names.any { it ==~ /.*_2\.fastq(\.gz)?/ }
@@ -19,6 +14,11 @@ def withLayout(meta, reads) {
 //  WORKFLOW
 
 workflow {
+    log.info """
+         M E T A G E N O M I C S - P I P E L I N E
+         =========================================
+         """
+
     ch_inputs = Channel
         .fromPath(params.input)
         .splitCsv(header: true, limit: params.limit)
