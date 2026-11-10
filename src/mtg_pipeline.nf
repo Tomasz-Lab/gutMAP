@@ -53,7 +53,7 @@ workflow {
 
     // --- 3. Metagenomic Assembly (Shared Step) ---
     MEGAHIT_ASSEMBLY(ch_non_human_reads)
-    ch_assembly = MEGAHIT_ASSEMBLY.out.assembly
+    ch_assembly = MEGAHIT_ASSEMBLY.out.contigs
 
     // =======================================================
     // --- BRANCH 1: Taxonomic Annotation with Sylph, GTDB version 226 ---
@@ -222,26 +222,16 @@ process MEGAHIT_ASSEMBLY {
         tuple val(sra_id), path(reads)
 
     output:
-        tuple val(sra_id), path("${sra_id}_megahit_out"), emit: assembly
-        tuple val(sra_id), path("*")
+        tuple val(sra_id), path("final.contigs.fa"), emit: contigs
+        tuple val(sra_id), path("{log,options.json}")
         tuple val(sra_id), path(".command*")
 
     script:
-    if (reads.size() == 2) {
-        """
-        megahit -1 ${reads[0]} -2 ${reads[1]} -o ${sra_id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
-        ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
-        ln -s ${sra_id}_megahit_out/log log
-        ln -s ${sra_id}_megahit_out/options.json options.json
-        """
-    } else {
-        """
-        megahit -r ${reads[0]} -o ${sra_id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
-        ln -s ${sra_id}_megahit_out/final.contigs.fa final.contigs.fa
-        ln -s ${sra_id}_megahit_out/log log
-        ln -s ${sra_id}_megahit_out/options.json options.json
-        """
-    }
+    def reads_args = reads.size() == 2 ? "-1 ${reads[0]} -2 ${reads[1]}" : "-r ${reads[0]}"
+    """
+    megahit ${reads_args} -o ${sra_id}_megahit_out --tmp-dir \$MEMFS -t ${task.cpus} --min-contig-len 1500
+    mv ${sra_id}_megahit_out/{final.contigs.fa,log,options.json} .
+    """
 }
 
 // =======================================================
@@ -297,7 +287,7 @@ process BAKTA_ANNOTATION {
     time 10.h
 
     input:
-        tuple val(sra_id), path(assembly)
+        tuple val(sra_id), path(contigs)
 
     output:
         tuple val(sra_id), path("${sra_id}.bakta/${sra_id}.ffn"), emit: nucleotides
@@ -324,7 +314,7 @@ process BAKTA_ANNOTATION {
         --skip-plot \\
         --meta \\
         --tmp-dir \$PWD \\
-        ${assembly}/final.contigs.fa
+        ${contigs}
     """
 }
 
@@ -502,14 +492,13 @@ process MAP_FOR_BINNING {
     memory "60 GB"
 
     input:
-        tuple val(sra_id), path(reads), path(megahit_dir)
+        tuple val(sra_id), path(reads), path(contigs)
 
     output:
-        tuple val(sra_id), path("${sra_id}.sorted.bam"), path(megahit_dir), emit: bam
+        tuple val(sra_id), path("${sra_id}.sorted.bam"), path(contigs), emit: bam
         tuple val(sra_id), path(".command*")
 
     script:
-    def contigs    = "${megahit_dir}/final.contigs.fa"
     def reads_args = reads.size() == 2 ? "-1 ${reads[0]} -2 ${reads[1]}" : "-U ${reads[0]}"
     """
     if [ ! -s ${contigs} ]; then
@@ -531,14 +520,13 @@ process METABAT2_BINNING {
     memory "20 GB"
 
     input:
-        tuple val(sra_id), path(bam), path(megahit_dir)
+        tuple val(sra_id), path(bam), path(contigs)
 
     output:
         tuple val(sra_id), path("${sra_id}_bins"), emit: bins
         tuple val(sra_id), path(".command*")
 
     script:
-    def contigs = "${megahit_dir}/final.contigs.fa"
     """
     jgi_summarize_bam_contig_depths --outputDepth ${sra_id}.depth.txt ${bam}
     mkdir -p ${sra_id}_bins
