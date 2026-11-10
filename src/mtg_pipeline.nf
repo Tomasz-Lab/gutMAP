@@ -241,12 +241,8 @@ process SYLPH_TAXONOMY {
 
 process BAKTA_ANNOTATION {
     tag "Bakta: ${meta.id}"
-    afterScript """
-    D=${params.outdir}/published/branch_2/01_annotation/${meta.id}
-    mkdir -p \$D/logs
-    cp -f ${meta.id}.bakta/${meta.id}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
-    cp -f ${meta.id}.bakta/${meta.id}.log ${task.workDir}/.command.{sh,err,out,log} \$D/logs/ 2>/dev/null || true
-    """
+    publishDir "$params.outdir/published/branch_2/01_annotation/${meta.id}", mode: 'copy', pattern: "${meta.id}.{faa,ffn,tsv,gff3,txt}"
+    afterScript "D=${params.outdir}/published/branch_2/01_annotation/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} ${meta.id}.log \$D/ 2>/dev/null || true"
     conda "bioconda::bakta=1.12.2 bioconda::ncbi-amrfinderplus=4.2.7"
     cpus 5
     memory "20 GB"
@@ -258,14 +254,14 @@ process BAKTA_ANNOTATION {
         tuple val(meta), path(contigs)
 
     output:
-        tuple val(meta), path("${meta.id}.bakta/${meta.id}.ffn"), emit: nucleotides
-        tuple val(meta), path("${meta.id}.bakta/${meta.id}.tsv"), emit: tsv
+        tuple val(meta), path("${meta.id}.ffn"), emit: nucleotides
+        tuple val(meta), path("${meta.id}.tsv"), emit: tsv
+        tuple val(meta), path("${meta.id}.{faa,gff3,txt}")
 
     script:
     """
     bakta \\
         --db ${params.bakta_db} \\
-        --output ${meta.id}.bakta \\
         --prefix ${meta.id} \\
         --threads ${task.cpus} \\
         --skip-trna \\
