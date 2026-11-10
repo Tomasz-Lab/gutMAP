@@ -608,13 +608,14 @@ process FILTER_AND_ANNOTATE {
     # Step 2: Run GTDB-Tk, but only if high-quality bins were actually found
     if [ -n "\$(find hq_bins -name '*.fa')" ]; then
         gtdbtk classify_wf \\
-        --genome_dir hq_bins \\
-        --out_dir ${meta.id}_gtdbtk_out \\
-        --cpus ${task.cpus} \\
-        --extension fa
-        ln -s ${meta.id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv gtdbtk.bac120.summary.tsv
-        ln -s ${meta.id}_gtdbtk_out/gtdbtk.log gtdbtk.log
-        ln -s ${meta.id}_gtdbtk_out/gtdbtk.json gtdbtk.json
+            --genome_dir hq_bins \\
+            --out_dir ${meta.id}_gtdbtk_out \\
+            --cpus ${task.cpus} \\
+            --extension fa
+        mv ${meta.id}_gtdbtk_out/{gtdbtk.log,gtdbtk.json} .
+        if [ -e ${meta.id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv ]; then
+            mv ${meta.id}_gtdbtk_out/classify/gtdbtk.bac120.summary.tsv .
+        fi
     else
         touch NO_HQ_BINS_FOUND.tsv
     fi
