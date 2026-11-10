@@ -319,7 +319,6 @@ process ALIGN_AND_QUANTIFY_READS {
     // Find the .fna file in the index file list to use as the base for alignment
     def index_base = index_files.find { it.name.endsWith('.fna') }
     def sorted_bam = "${meta.id}.bam"
-    // samtools sort -m 4G ???
     """
     bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
     samtools index --threads ${task.cpus} ${sorted_bam}
@@ -343,82 +342,9 @@ process CALCULATE_TPM_AND_ANNOTATE {
         tuple val(meta), path("${meta.id}_gene_quantification.tsv"), emit: quantification
 
     script:
-        def merged_output = "${meta.id}_gene_quantification.tsv"
-
-        """
-        python3 - <<'EOF'
-        import pandas as pd
-        from io import StringIO
-
-        # -----------------------------
-        # Read idxstats file and compute TPM
-        # -----------------------------
-        gene_lengths = {}
-        read_counts = {}
-        rpk_sum = 0.0
-
-        with open("${idxstats}", "r") as f:
-            for line in f:
-                parts = line.strip().split("\\t")
-                gene_id, length, mapped_reads, _ = parts
-
-                if gene_id == "*" or int(length) == 0:
-                    continue
-
-                length = int(length)
-                mapped_reads = int(mapped_reads)
-
-                gene_lengths[gene_id] = length
-                read_counts[gene_id] = mapped_reads
-
-                rpk = mapped_reads / (length / 1000.0)
-                rpk_sum += rpk
-
-        scaling_factor = rpk_sum / 1_000_000.0 if rpk_sum > 0 else 0
-
-        abundances_data = []
-        for gene_id in gene_lengths:
-            length = gene_lengths[gene_id]
-            reads = read_counts[gene_id]
-            rpk = reads / (length / 1000.0)
-            tpm = rpk / scaling_factor if scaling_factor > 0 else 0
-
-            abundances_data.append({
-                "gene_id": gene_id,
-                "length": length,
-                "read_count": reads,
-                "tpm": tpm
-            })
-
-        abundances_df = pd.DataFrame(abundances_data)
-
-        # -----------------------------
-        # Read annotation TSV
-        # (keep only last '#' line as header)
-        # -----------------------------
-        with open("${tsv_file}", "r") as f:
-            lines = f.readlines()
-
-        header_idx = max(i for i, line in enumerate(lines) if line.startswith("#"))
-        header_line = lines[header_idx].lstrip("#").strip()
-        data_lines = lines[header_idx + 1:]
-
-        tsv_str = header_line + "\\n" + "".join(data_lines)
-        tsv_df = pd.read_csv(StringIO(tsv_str), sep="\\t", skipinitialspace=True)
-
-        # -----------------------------
-        # Merge and write output
-        # -----------------------------
-        merged_df = tsv_df.merge(
-            abundances_df,
-            left_on="Locus Tag",
-            right_on="gene_id",
-            how="inner"
-        )
-
-        merged_df.to_csv("${merged_output}", sep="\\t", index=False)
-        EOF
-        """
+    """
+    tpm_annotate.py ${idxstats} ${tsv_file} ${meta.id}_gene_quantification.tsv
+    """
 }
 
 // =======================================================
@@ -446,7 +372,7 @@ process MAP_FOR_BINNING {
         exit 23
     fi
     bowtie2-build --threads ${task.cpus} -f ${contigs} ${meta.id}.assembly.idx
-    bowtie2 -x ${meta.id}.assembly.idx ${reads_args} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -m 4G -o ${meta.id}.sorted.bam
+    bowtie2 -x ${meta.id}.assembly.idx ${reads_args} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -o ${meta.id}.sorted.bam
     """
 }
 
@@ -527,40 +453,8 @@ process FILTER_AND_ANNOTATE {
     def min_completeness = 90
     def max_contamination = 5
     """
-    cat << EOF > filter_bins.py
-    #!/usr/bin/env python
-    import pandas as pd
-    import os
-    import sys
-    import shutil
-
-    checkm_file = sys.argv[1]
-    bins_dir = sys.argv[2]
-    out_dir = sys.argv[3]
-    completeness = float(sys.argv[4])
-    contamination = float(sys.argv[5])
-
-    df = pd.read_csv(checkm_file, sep='\t', header=0, index_col=None, on_bad_lines='skip').dropna(subset=['Completeness', 'Contamination'])
-
-    hq_df = df[(df['Completeness'] >= completeness) & (df['Contamination'] <= contamination)]
-    hq_bin_ids = hq_df['Name'].tolist()
-
-    os.makedirs(out_dir, exist_ok=True)
-    for bin_id in hq_bin_ids:
-        source_path = os.path.join(bins_dir, f"{bin_id}.fa")
-        dest_path = os.path.join(out_dir, f"{bin_id}.fa")
-        if os.path.exists(source_path):
-            shutil.copy(source_path, dest_path)
-    EOF
-
-    # Step 1: Execute the python script to populate the hq_bins directory
-    python filter_bins.py \\
-        "${checkm_summary}" \\
-        "${bins_dir}" \\
-        "hq_bins" \\
-        "${min_completeness}" \\
-        "${max_contamination}"
-    # Step 2: Run GTDB-Tk, but only if high-quality bins were actually found
+    filter_bins.py ${checkm_summary} ${bins_dir} hq_bins ${min_completeness} ${max_contamination}
+    
     if [ -n "\$(find hq_bins -name '*.fa')" ]; then
         gtdbtk classify_wf \\
             --genome_dir hq_bins \\
