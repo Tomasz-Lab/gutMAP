@@ -286,7 +286,7 @@ process BAKTA_ANNOTATION {
     cp -f ${sra_id}.bakta/${sra_id}.{faa,ffn,tsv,gff3,txt} \$D/ 2>/dev/null || true
     cp -f ${sra_id}.bakta/${sra_id}.log ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
     """
-    conda "bakta ncbi-amrfinderplus"
+    conda "bioconda::bakta=1.12.2 bioconda::ncbi-amrfinderplus=4.2.7"
     cpus 5
     memory "20 GB"
     queue 'plgrid-bigmem'
