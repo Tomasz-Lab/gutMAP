@@ -162,17 +162,9 @@ for (( i=1; i<=N_BATCHES; i++ )); do
     set -e
 
     if [ $NF_EXIT -ne 0 ]; then
-        echo "[WARN] Nextflow exited with code $NF_EXIT for $BATCH_NAME — continuing to sizing"
+        echo "[WARN] Nextflow exited with code $NF_EXIT for $BATCH_NAME — continuing"
     else
         echo "[OK] $BATCH_NAME finished successfully"
-    fi
-
-    # --- 3. Per-step workdir sizing ---
-    echo "Submitting sizing job for $BATCH_NAME (sbatch --wait) ..."
-    if sbatch --wait "$PROJ/src/measure_workdirs.sbatch" "$NF_LOG" "$BATCH_NAME"; then
-        echo "[OK] sizing complete for $BATCH_NAME"
-    else
-        echo "[WARN] sizing job failed (rc=$?) — continuing"
     fi
 
     # Clean up work dir to free scratch space (runs between batches if enabled)
