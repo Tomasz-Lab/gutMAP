@@ -432,7 +432,9 @@ process CHECKM_QA {
     fi
 
     checkm2 predict --input ${bins_dir} --output-directory ${meta.id}_checkm2_out --threads ${task.cpus} -x fa
-    mv ${meta.id}_checkm2_out/{quality_report.tsv,checkm2.log,diamond_output/DIAMOND_RESULTS.tsv} .
+    mv ${meta.id}_checkm2_out/{quality_report.tsv,checkm2.log} .
+    # With more than 250 bins, CheckM2 writes DIAMOND_RESULTS_0.tsv, _1.tsv and so on.
+    cat ${meta.id}_checkm2_out/diamond_output/DIAMOND_RESULTS*.tsv > DIAMOND_RESULTS.tsv
     """
 }
 
