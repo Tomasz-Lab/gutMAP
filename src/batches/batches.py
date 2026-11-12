@@ -90,7 +90,7 @@ ENDPOINTS = {"SYLPH_TAXONOMY", "CALCULATE_TPM_AND_ANNOTATE", "FILTER_AND_ANNOTAT
 # A sylph profile with only its header has 218 bytes.
 EMPTY_SYLPH_BYTES = 218
 TASK_LOGS = [".command.sh", ".command.err", ".command.out", ".command.log", ".exitcode"]
-DEFAULT_PIPELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "mtg_pipeline.nf")
+DEFAULT_PIPELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "pipeline", "mtg_pipeline.nf")
 
 
 # --- inputs ---
