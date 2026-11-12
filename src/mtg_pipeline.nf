@@ -148,11 +148,16 @@ process FASTP_QC {
     script:
     def in_args  = meta.single_end ? "-i ${reads}" : "--in1 *_1.fastq* --in2 *_2.fastq* --detect_adapter_for_pe"
     def out_args = meta.single_end ? "-o ${meta.id}.trimmed.fastq" : "--out1 ${meta.id}_1.trimmed.fastq --out2 ${meta.id}_2.trimmed.fastq"
+    def converted = [reads].flatten().findAll { f -> f.name.endsWith('.fastq') }.join(' ')
     """
     fastp ${in_args} ${out_args} \
           --html ${meta.id}.fastp.html \
           --json ${meta.id}.fastp.json \
           --thread ${task.cpus}
+
+    # The FASTQ files of CHECK_AND_CONVERT_READS have no other consumer. Their removal frees disk early and breaks -resume.
+    # Downloaded inputs end in .fastq.gz and stay.
+    for f in ${converted}; do rm -f "\$(readlink -f "\$f")"; done
     """
 }
 
@@ -180,6 +185,9 @@ process REMOVE_HUMAN_READS {
             --very-sensitive-local \
             ${unaligned} ${meta.id}.nonhuman.fastq \
             -S /dev/null
+
+    # The trimmed reads of FASTP_QC have no other consumer. Their removal frees disk early and breaks -resume.
+    rm -f \$(readlink -f ${reads})
     """
 }
 
