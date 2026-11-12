@@ -41,7 +41,7 @@ class Pacer:
         self.last = time.monotonic()
 
 
-def fetch(accessions, credentials, pacer, retries=5, timeout=120):
+def fetch(accessions, credentials, pacer, retries=8, timeout=120):
     """Return the runinfo CSV text for a list of run accessions. Raise RuntimeError after the last retry."""
     params = {"db": "sra", "rettype": "runinfo", "retmode": "csv", "id": ",".join(accessions)}
     params.update({key: value for key, value in credentials.items() if value})

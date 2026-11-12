@@ -172,6 +172,26 @@ def plan(args, failures):
 
 # --- runinfo ---
 
+def fetch_batch(batch, credentials, pacer):
+    """Return (runinfo rows, {sra_id: error}). If the request for the batch keeps failing, ask for each sample alone.
+
+    NCBI fails on some samples every time (SRR769534: HTTP 500 alone, a cut response in a batch).
+    """
+    try:
+        return runinfo.parse(runinfo.fetch(batch, credentials, pacer)), {}
+    except RuntimeError as error:
+        print(f"runinfo: request for {len(batch)} samples failed ({error}), asking for each sample alone", flush=True)
+    rows, errors = [], {}
+    for sra_id in batch:
+        try:
+            rows += runinfo.parse(runinfo.fetch([sra_id], credentials, pacer, retries=1))
+        except RuntimeError as error:
+            errors[sra_id] = str(error)
+    if len(errors) == len(batch):
+        raise RuntimeError(f"all {len(batch)} samples failed alone, for example {next(iter(errors.values()))}")
+    return rows, errors
+
+
 def fetch_runinfo(args):
     """Add the NCBI runinfo rows of the samples that are not in <state-dir>/runinfo.csv yet."""
     samples = read_samples(args.ids)[0]
@@ -185,11 +205,11 @@ def fetch_runinfo(args):
           f"{len(to_fetch)} to fetch ({'with' if credentials['api_key'] else 'without'} NCBI_API_KEY)", flush=True)
     os.makedirs(args.state_dir, exist_ok=True)
 
-    returned = set()
+    returned, errors = set(), {}
     for start in range(0, len(to_fetch), RUNINFO_BATCH):
         batch = to_fetch[start:start + RUNINFO_BATCH]
         try:
-            rows = runinfo.parse(runinfo.fetch(batch, credentials, pacer))
+            rows, batch_errors = fetch_batch(batch, credentials, pacer)
         except (RuntimeError, ValueError) as error:
             raise SystemExit(f"runinfo stopped after {start} samples: {error}. Run it again to continue.")
         new_rows = [row for row in rows if row[0] in batch and row[0] not in returned]
@@ -200,13 +220,15 @@ def fetch_runinfo(args):
                 writer.writerow(runinfo.COLUMNS)
             writer.writerows(new_rows)
         returned.update(row[0] for row in new_rows)
+        errors.update(batch_errors)
         if (start // RUNINFO_BATCH + 1) % 10 == 0:
             print(f"runinfo: {start + len(batch)}/{len(to_fetch)} samples asked, {len(returned)} rows", flush=True)
 
-    missing = [sra_id for sra_id in to_fetch if sra_id not in returned]
+    missing = [[sra_id, errors.get(sra_id, "not returned")] for sra_id in to_fetch if sra_id not in returned]
     with open(os.path.join(args.state_dir, "runinfo_missing.csv"), "w", newline="") as f:
-        csv.writer(f).writerows([["sra_id"]] + [[sra_id] for sra_id in missing])
-    print(f"runinfo: {len(returned)} rows added, {len(missing)} samples not found (runinfo_missing.csv)")
+        csv.writer(f).writerows([["sra_id", "reason"]] + missing)
+    print(f"runinfo: {len(returned)} rows added, {len(missing)} samples without runinfo "
+          f"({len(errors)} of them failed) in runinfo_missing.csv")
 
 
 # --- download ---
