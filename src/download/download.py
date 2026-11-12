@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Download SRA/ENA runs with kingfisher into the input dir that the pipeline reads.
 
+    download.py runinfo  --ids samples.csv --input-dir INPUT_DIR
     download.py plan     --ids samples.csv --input-dir INPUT_DIR
     download.py run      --ids samples.csv --input-dir INPUT_DIR [--methods aws-http:4,ena-ftp:4]
     download.py validate --input-dir INPUT_DIR [--threads 4]
     download.py status   --input-dir INPUT_DIR [--job JOBID]
 
-The state dir (default: <input-dir>.download) holds the attempt records and the
-downloads that are not in the input dir yet. run puts each download that passes the
+The state dir (default: <input-dir>.download) holds the attempt records, the NCBI
+runinfo of the samples and the downloads that are not in the input dir yet. runinfo
+adds the rows of new samples to <state-dir>/runinfo.csv. run puts each download that passes the
 file-set check in <state-dir>/downloaded/. validate reads all data of these downloads
 and moves each one that passes to the input dir.
 """
@@ -24,6 +26,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import runinfo
 import validate
 
 RUN_ACCESSION = re.compile(r"[SED]RR\d+")
@@ -37,6 +40,7 @@ CAUSE_PATTERNS = [
     r"ERROR: (?!No more specified download methods)[^\n]+",   # kingfisher
 ]
 PROGRESS_SECONDS = 60
+RUNINFO_BATCH = 200
 
 
 def utc_now():
@@ -93,6 +97,11 @@ def append_record(path, columns, record):
         writer.writerow(record)
 
 
+def read_runinfo(state_dir):
+    """Return {sra_id: runinfo row} from <state-dir>/runinfo.csv."""
+    return {row["Run"]: row for row in read_records(os.path.join(state_dir, "runinfo.csv"))}
+
+
 def subdirs(path):
     return set(os.listdir(path)) if os.path.isdir(path) else set()
 
@@ -138,6 +147,13 @@ def print_class_row(name, ids, samples, note=""):
 def plan(args, failures):
     """Print the plan and return the sample ids of each class."""
     samples, empty_rows, duplicates, not_runs = read_samples(args.ids)
+    from_csv = sum(size is not None for size in samples.values())
+    runinfo_rows = read_runinfo(args.state_dir)
+    for sra_id, size in samples.items():
+        megabytes = expected_bytes(runinfo_rows.get(sra_id, {}).get("size_MB"))
+        if size is None and megabytes:
+            samples[sra_id] = megabytes * 10**6
+    from_runinfo = sum(size is not None for size in samples.values()) - from_csv
     classes = classify(samples, args.input_dir, args.state_dir, failures, args.max_attempts)
     n_rows = len(samples) + empty_rows + duplicates + not_runs
     notes = {"downloaded": "wait for the content check",
@@ -145,11 +161,52 @@ def plan(args, failures):
 
     print(f"{args.ids}: {len(samples)} samples from {n_rows} rows "
           f"(not used: {empty_rows} empty, {duplicates} duplicate, {not_runs} not a run accession)")
+    print(f"sizes: {from_csv} from the Bytes column, {from_runinfo} from runinfo.csv, "
+          f"{len(samples) - from_csv - from_runinfo} unknown")
     print(f"\n{'class':<12} {'samples':>9} {'GB':>10}")
     for name, ids in classes.items():
         print_class_row(name, ids, samples, notes.get(name, ""))
     print_class_row("total", list(samples), samples)
     return classes
+
+
+# --- runinfo ---
+
+def fetch_runinfo(args):
+    """Add the NCBI runinfo rows of the samples that are not in <state-dir>/runinfo.csv yet."""
+    samples = read_samples(args.ids)[0]
+    path = os.path.join(args.state_dir, "runinfo.csv")
+    known = read_runinfo(args.state_dir)
+    to_fetch = [sra_id for sra_id in samples if sra_id not in known]
+    credentials = {name: os.environ.get(variable) for name, variable in
+                   (("api_key", "NCBI_API_KEY"), ("email", "NCBI_EMAIL"), ("tool", "NCBI_TOOL"))}
+    pacer = runinfo.Pacer(bool(credentials["api_key"]))
+    print(f"runinfo: {len(samples)} samples, {len(samples) - len(to_fetch)} already in {path}, "
+          f"{len(to_fetch)} to fetch ({'with' if credentials['api_key'] else 'without'} NCBI_API_KEY)", flush=True)
+    os.makedirs(args.state_dir, exist_ok=True)
+
+    returned = set()
+    for start in range(0, len(to_fetch), RUNINFO_BATCH):
+        batch = to_fetch[start:start + RUNINFO_BATCH]
+        try:
+            rows = runinfo.parse(runinfo.fetch(batch, credentials, pacer))
+        except (RuntimeError, ValueError) as error:
+            raise SystemExit(f"runinfo stopped after {start} samples: {error}. Run it again to continue.")
+        new_rows = [row for row in rows if row[0] in batch and row[0] not in returned]
+        is_new = not os.path.exists(path)
+        with open(path, "a", newline="") as f:
+            writer = csv.writer(f)
+            if is_new:
+                writer.writerow(runinfo.COLUMNS)
+            writer.writerows(new_rows)
+        returned.update(row[0] for row in new_rows)
+        if (start // RUNINFO_BATCH + 1) % 10 == 0:
+            print(f"runinfo: {start + len(batch)}/{len(to_fetch)} samples asked, {len(returned)} rows", flush=True)
+
+    missing = [sra_id for sra_id in to_fetch if sra_id not in returned]
+    with open(os.path.join(args.state_dir, "runinfo_missing.csv"), "w", newline="") as f:
+        csv.writer(f).writerows([["sra_id"]] + [[sra_id] for sra_id in missing])
+    print(f"runinfo: {len(returned)} rows added, {len(missing)} samples not found (runinfo_missing.csv)")
 
 
 # --- download ---
@@ -477,8 +534,8 @@ def status(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["plan", "run", "validate", "status"])
-    parser.add_argument("--ids", help="plan, run: CSV with an sra_id column and an optional Bytes column")
+    parser.add_argument("command", choices=["runinfo", "plan", "run", "validate", "status"])
+    parser.add_argument("--ids", help="runinfo, plan, run: CSV with an sra_id column and an optional Bytes column")
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--state-dir", help="default: <input-dir>.download")
     parser.add_argument("--max-attempts", type=int, default=3)
@@ -489,7 +546,7 @@ def parse_args():
     parser.add_argument("--file-timeout", type=int, default=2 * 3600, help="validate: seconds for the check of one file")
     parser.add_argument("--job", help="status: only the rows of this job ID (a download job or a validate job)")
     args = parser.parse_args()
-    if args.command in ("plan", "run") and not args.ids:
+    if args.command in ("runinfo", "plan", "run") and not args.ids:
         parser.error(f"{args.command} needs --ids")
     args.state_dir = args.state_dir or os.path.normpath(args.input_dir) + ".download"
     args.methods = parse_methods(args.methods)
@@ -498,7 +555,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if args.command == "plan":
+    if args.command == "runinfo":
+        fetch_runinfo(args)
+    elif args.command == "plan":
         _, failures = read_history(args.state_dir)
         plan(args, failures)
     elif args.command == "run":

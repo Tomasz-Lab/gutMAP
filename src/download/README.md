@@ -4,7 +4,8 @@
 
 ## Files
 
-- `download.py`: the commands `plan`, `run`, `validate` and `status`. For the options, run `python3 download.py --help`.
+- `download.py`: the commands `runinfo`, `plan`, `run`, `validate` and `status`. For the options, run `python3 download.py --help`.
+- `runinfo.py`: the requests to NCBI E-utilities for `runinfo`.
 - `validate.py`: the checks of one sample dir. `run` and `validate` use the same checks.
 - `download.sbatch`, `validate.sbatch`: the Slurm jobs for `run` and `validate`.
 
@@ -22,6 +23,16 @@
 
 The state dir `<input-dir>.download/` also holds `attempts.csv` (one row for each download attempt), `validations.csv` (one row for each content check) and `logs/` (the kingfisher log of each failed attempt).
 
+## Runinfo
+
+`runinfo` adds the NCBI SRA runinfo row of each new sample to `<input-dir>.download/runinfo.csv`. The batch selection uses `bases` and `spots` from it to estimate the disk use of each sample. `plan` uses `size_MB` when the `--ids` CSV has no `Bytes` value.
+
+- Run it before `plan`, on a login node. It sends 200 IDs in each request, so 100k samples take some minutes.
+- It asks only for the samples that are not in `runinfo.csv`. If it stops, run it again.
+- The samples that NCBI does not return go to `runinfo_missing.csv`.
+- Without `NCBI_API_KEY`, NCBI allows 3 requests each second. With a key, 10. Set the key as an environment variable. `NCBI_EMAIL` and `NCBI_TOOL` are optional.
+- efetch sends no header row. If a row does not have the expected 47 fields, `runinfo` stops.
+
 ## Requirements
 
 - Python 3.7 or later.
@@ -32,6 +43,7 @@ The state dir `<input-dir>.download/` also holds `attempts.csv` (one row for eac
 Submit the jobs from this dir:
 
 ```
+python3 download.py runinfo --ids samples.csv --input-dir INPUT_DIR
 python3 download.py plan --ids samples.csv --input-dir INPUT_DIR
 export KF_ENV=ENV SBATCH_ACCOUNT=ACCOUNT SBATCH_PARTITION=PARTITION
 J=$(sbatch --parsable download.sbatch --ids samples.csv --input-dir INPUT_DIR)
