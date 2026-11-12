@@ -422,7 +422,10 @@ def worker(method, run_state):
         run_state.finish(record)
 
 
-def check_same_filesystem(input_dir, state_dir):
+def prepare_dirs(input_dir, state_dir):
+    """Create the input dir and the state dir. Stop if they are not on one filesystem."""
+    for path in (input_dir, state_dir):
+        os.makedirs(path, exist_ok=True)
     if os.stat(input_dir).st_dev != os.stat(state_dir).st_dev:
         raise SystemExit(f"{input_dir} and {state_dir} must be on one filesystem, so that a rename is atomic")
 
@@ -433,8 +436,7 @@ def run(args):
     Only one run at a time can use a state dir. download.sbatch makes sure of this
     with --dependency=singleton.
     """
-    os.makedirs(args.state_dir, exist_ok=True)
-    check_same_filesystem(args.input_dir, args.state_dir)
+    prepare_dirs(args.input_dir, args.state_dir)
     shutil.rmtree(os.path.join(args.state_dir, "staging"), ignore_errors=True)
     for name in ("staging", "downloaded", "logs"):
         os.makedirs(os.path.join(args.state_dir, name), exist_ok=True)
@@ -486,7 +488,7 @@ def check_downloads(args):
     for tool in ("vdb-validate", "gzip"):
         if not shutil.which(tool):
             raise SystemExit(f"{tool} is not on PATH")
-    check_same_filesystem(args.input_dir, args.state_dir)
+    prepare_dirs(args.input_dir, args.state_dir)
     sra_ids = sorted(subdirs(os.path.join(args.state_dir, "downloaded")))
     validations_csv = os.path.join(args.state_dir, "validations.csv")
     print(f"{len(sra_ids)} downloads to check with {args.threads} threads", flush=True)
