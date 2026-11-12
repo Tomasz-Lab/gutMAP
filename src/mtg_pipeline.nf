@@ -328,6 +328,7 @@ process ALIGN_AND_QUANTIFY_READS {
     def index_base = index_files.find { it.name.endsWith('.fna') }
     def sorted_bam = "${meta.id}.bam"
     """
+    set -o pipefail
     bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
     samtools index --threads ${task.cpus} ${sorted_bam}
     samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${meta.id}.idxstats.txt
@@ -375,6 +376,7 @@ process MAP_FOR_BINNING {
     script:
     def reads_args = meta.single_end ? "-U ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
     """
+    set -o pipefail
     bowtie2-build --threads ${task.cpus} -f ${contigs} ${meta.id}.assembly.idx
     bowtie2 -x ${meta.id}.assembly.idx ${reads_args} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -o ${meta.id}.sorted.bam
     """
