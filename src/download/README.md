@@ -41,6 +41,8 @@ The state dir `<input-dir>.download/` also holds `attempts.csv` (one row for eac
 
 ## Run with Slurm
 
+The `Makefile` at the repo root runs these commands with the settings of `config.mk`. See the README at the repo root.
+
 Submit the jobs from this dir:
 
 ```

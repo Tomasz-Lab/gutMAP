@@ -54,6 +54,8 @@ Downloads must not run at the same time as a batch, because the budget does not 
 
 ## Run on Helios
 
+The `Makefile` at the repo root runs these commands with the settings of `config.mk`. See the README at the repo root.
+
 Run the commands from the launch dir, the dir that holds `src/` and the launch-dir `nextflow.config`.
 
 1. Download the samples and their runinfo with `../download`.
