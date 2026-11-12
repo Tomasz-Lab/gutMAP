@@ -60,11 +60,11 @@ workflow {
     // --- 2. Quality Control & Decontamination ---
     FASTP_QC(ch_ready_for_qc)
     REMOVE_HUMAN_READS(FASTP_QC.out.reads)
-    ch_non_human_reads = REMOVE_HUMAN_READS.out.reads
+    ch_non_human_reads = REMOVE_HUMAN_READS.out.reads.filter { _meta, reads -> [reads].flatten().every { f -> f.size() > 0 } }
 
     // --- 3. Metagenomic Assembly (Shared Step) ---
     MEGAHIT_ASSEMBLY(ch_non_human_reads)
-    ch_assembly = MEGAHIT_ASSEMBLY.out.contigs
+    ch_assembly = MEGAHIT_ASSEMBLY.out.contigs.filter { _meta, contigs -> contigs.size() > 0 }
 
     // =======================================================
     // --- BRANCH 1: Taxonomic Annotation with Sylph, GTDB version 226 ---
@@ -375,10 +375,6 @@ process MAP_FOR_BINNING {
     script:
     def reads_args = meta.single_end ? "-U ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
     """
-    if [ ! -s ${contigs} ]; then
-        echo "FATAL: ${contigs} is empty or missing — MEGAHIT produced no assembly. Skipping mapping."
-        exit 23
-    fi
     bowtie2-build --threads ${task.cpus} -f ${contigs} ${meta.id}.assembly.idx
     bowtie2 -x ${meta.id}.assembly.idx ${reads_args} --threads ${task.cpus} | samtools view -u -b -F 4 | samtools sort --threads ${task.cpus} -o ${meta.id}.sorted.bam
     """
@@ -402,7 +398,9 @@ process METABAT2_BINNING {
     """
     jgi_summarize_bam_contig_depths --outputDepth ${meta.id}.depth.txt ${bam}
     mkdir -p ${meta.id}_bins
-    metabat2 -i ${contigs} -a ${meta.id}.depth.txt -o ${meta.id}_bins/bin -t ${task.cpus} -m 1500 -v
+    metabat2 -i ${contigs} -a ${meta.id}.depth.txt -o ${meta.id}_bins/bin -t ${task.cpus} -m 1500 -v > metabat2.log 2>&1 \
+        || grep -q "There were no large target contigs" metabat2.log || { cat metabat2.log; exit 1; }
+    cat metabat2.log
     """
 }
 
@@ -422,14 +420,15 @@ process CHECKM_QA {
         tuple val(meta), path("quality_report.tsv"), emit: checkm_summary
         tuple val(meta), path("DIAMOND_RESULTS.tsv"), emit: diamond_results
 
-    // Exit codes: 22 = no bins produced upstream (MetaBAT2 found nothing) — distinguishable in SLURM Exit field for downstream analysis.
     script:
     """
     N_BINS=\$(find -L ${bins_dir} -maxdepth 1 -type f -name "*.fa" | wc -l)
     echo "\$(date -Iseconds) CheckM input ${bins_dir}: \$N_BINS bin(s)"
     if [ "\$N_BINS" -eq 0 ]; then
-        echo "FATAL: no bins in ${bins_dir} — MetaBAT2 produced none. Skipping CheckM."
-        exit 22
+        echo "No bins in ${bins_dir}: MetaBAT2 made none, so CheckM2 does not run."
+        printf 'Name\\tCompleteness\\tContamination\\n' > quality_report.tsv
+        touch DIAMOND_RESULTS.tsv
+        exit 0
     fi
 
     checkm2 predict --input ${bins_dir} --output-directory ${meta.id}_checkm2_out --threads ${task.cpus} -x fa

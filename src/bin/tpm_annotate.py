@@ -29,7 +29,7 @@ def tpm_table(genes):
         {"gene_id": gene_id, "length": length, "read_count": reads,
          "tpm": gene_rpk / scaling_factor if scaling_factor > 0 else 0}
         for (gene_id, length, reads), gene_rpk in zip(genes, rpk)
-    ])
+    ], columns=["gene_id", "length", "read_count", "tpm"])
 
 
 def read_bakta_tsv(path):
