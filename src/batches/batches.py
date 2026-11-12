@@ -1,36 +1,60 @@
 #!/usr/bin/env python3
-"""Run the pipeline in batches that fit a disk budget.
+"""Run the pipeline in batches that fit a disk budget, and promote the results.
 
-    batches.py plan --ids samples.csv --input-dir INPUT_DIR --staging-dir STAGING_DIR \\
-                    --disk-budget 20T [--out next_batch.csv]
-    batches.py run  --ids samples.csv --input-dir INPUT_DIR --staging-dir STAGING_DIR \\
-                    --disk-budget 20T [--n-batches N]
+    batches.py plan    --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--out next.csv]
+    batches.py run     --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--n-batches N]
+    batches.py status  --staging-dir S --ids IDS.csv --input-dir IN [--batch batch_NNNN]
+    batches.py sample  --staging-dir S SRA_ID
+    batches.py promote --staging-dir S --valid-dir VALID --logs-dir LOGS [--yes]
 
-Each sample reserves --reserve-factor x its FASTQ size, estimated from runinfo as
-2 x bases + 120 B x spots. If runinfo has no bases for it, the sample reserves
---input-factor x the size of its dir in --input-dir. A batch takes the samples in the order of --ids until the
-next sample does not fit in --disk-budget. plan prints the next batch and writes
-nothing unless --out is given.
+<staging-dir>/samples.tsv is the only record of the sample states. It has one row for
+each sample that was in a batch: state, last batch, number of batches, size gate,
+reason, and one column for each pipeline step (ok, failed <exit code>, or - when the
+step did not run). Only one run or promote at a time can use a staging dir.
 
-run creates <staging-dir>/batch_NNNN/ with batch.csv, runs the pipeline with that dir
-as outdir, writes samples.tsv, copies the logs of failed tasks to failed_logs/ and
-runs `nextflow clean -f` to remove the work dir of the run. It repeats until no sample
-is eligible or after --n-batches batches. Start run from the launch dir of the
-pipeline, one run at a time. A batch without samples.tsv (its run stopped) is
-finished first. On SIGTERM or SIGINT, run passes the signal to nextflow, finishes
-the batch and stops.
+plan: each sample reserves --reserve-factor x its FASTQ size from runinfo
+(2 x bases + 120 B x spots), or else --input-factor x the size of its dir in
+--input-dir. The next batch takes the eligible samples in the order of --ids until
+the next sample does not fit in --disk-budget.
 
-Sample states, from <staging-dir>/batch_NNNN/{batch.csv,samples.tsv}:
-  running         in a batch that has no samples.tsv yet
-  done, failed    the state in samples.tsv of its last batch
+run: creates <staging-dir>/batch_NNNN/ with batch.csv, sets its samples to running and
+runs the pipeline with that dir as outdir. Then it writes the results to samples.tsv,
+copies the logs of failed tasks to failed_logs/, rebuilds <staging-dir>/traces.tsv
+(the traces of all batches, with the columns batch and run) and runs `nextflow clean
+-f`. The traces stay in the batch dirs. It repeats until no sample is eligible or
+after --n-batches batches. Start it from the launch dir of the pipeline. At its start,
+it finishes the batches of a stopped run. On SIGTERM or SIGINT, it passes the signal
+to nextflow, finishes the batch and stops.
+
+status: the sample states, the result of each last batch, the causes of the failed
+samples and the samples at the retry limit. sample: the row of one sample.
+
+promote: moves the dirs of the samples with gate yes and state done or failed from
+<batch>/published/ to the same paths in --valid-dir and --logs-dir:
+  <step>/<id>/logs/                              -> <logs-dir>/<step>/<id>/logs/
+  <step>/<id>/ of 02_fastp_qc, 03_non_human_reads,
+  or with only logs/ in it                       -> <logs-dir>/<step>/<id>/
+  all other <step>/<id>/                         -> <valid-dir>/<step>/<id>/
+It uses os.rename, so all dirs must be on one filesystem. If a target exists, no dir
+of that sample moves. Without --yes, it only prints the counts. With --yes, it writes
+each move to <staging-dir>/promote.csv and sets the state promoted. After a stop, it
+moves only what is still in published/.
+
+Sample states:
+  running, done, retry, failed, promoted   the state in samples.tsv
   retry limit     state retry after --max-batches batches
-  not downloaded  not in --input-dir
-  eligible        all other samples: new samples and samples to retry
+  not downloaded  not in samples.tsv and not in --input-dir
+  eligible        new samples in --input-dir, and samples to retry
 
-In samples.tsv: failed = a task failed with an exit code that is not transient, or
-the size gate failed; retry = a task failed with a transient exit code, or an
-endpoint did not run; done = all endpoints ran and the size gate passed. If the run
-did not end normally, failed becomes retry: a stopped task can end with any code.
+The result of a batch for each sample:
+  failed  a task failed with an exit code that is not transient, or no task failed
+          and the size gate failed
+  retry   a task failed with a transient exit code
+  done    no task failed and the size gate passed
+If the run did not end normally, failed becomes retry, because a stopped task can end
+with any code, and a sample with an endpoint that did not run gets retry. If the run
+ended normally, a step that did not run was skipped on purpose, for example because
+MEGAHIT made no contigs.
 
 Python 3.7 or later, standard library only.
 """
@@ -42,13 +66,24 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 from collections import Counter, defaultdict
 
 RUN_ACCESSION = re.compile(r"[SED]RR\d+")
 BATCH_NAME = re.compile(r"batch_(\d+)")
 FASTQ_BYTES_PER_SPOT = 120
 SIZE_UNITS = {"": 1, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
-STATES = ["running", "done", "failed", "retry limit", "not downloaded", "eligible"]
+STATES = ["running", "done", "failed", "promoted", "retry limit", "not downloaded", "eligible"]
+FINAL_STATES = {"done", "failed", "promoted"}
+TABLE = "samples.tsv"
+TRACES = "traces.tsv"
+LOG_STEPS = {"02_fastp_qc", "03_non_human_reads"}
+SAMPLE_COLUMNS = ["sra_id", "state", "batch", "batches", "gate", "reason"]
+STEPS = [
+    "CHECK_AND_CONVERT_READS", "FASTP_QC", "REMOVE_HUMAN_READS", "MEGAHIT_ASSEMBLY", "SYLPH_TAXONOMY",
+    "BAKTA_ANNOTATION", "CREATE_CATALOG_AND_INDEX", "ALIGN_AND_QUANTIFY_READS", "CALCULATE_TPM_AND_ANNOTATE",
+    "MAP_FOR_BINNING", "METABAT2_BINNING", "CHECKM_QA", "FILTER_AND_ANNOTATE",
+]
 OK_STATUS = {"COMPLETED", "CACHED"}
 TRANSIENT_EXITS = {"-", "12", "130", "137", "140", "143", "247"}
 ENDPOINTS = {"SYLPH_TAXONOMY", "CALCULATE_TPM_AND_ANNOTATE", "FILTER_AND_ANNOTATE"}
@@ -110,22 +145,22 @@ def read_fastq_sizes(runinfo_csv):
             for row in read_csv(runinfo_csv) if number(row["bases"]) > 0}
 
 
-# --- batches and sample states ---
+# --- the status table and sample states ---
 
-def read_batches(staging_dir):
-    """Return [(batch dir, sample ids, {sra_id: state} or None while it runs)] in batch order."""
-    batches = []
-    for name in sorted(subdirs(staging_dir)):
-        batch_dir = os.path.join(staging_dir, name)
-        if not BATCH_NAME.fullmatch(name) or not os.path.exists(os.path.join(batch_dir, "batch.csv")):
-            continue
-        ids = [row["sra_id"] for row in read_csv(os.path.join(batch_dir, "batch.csv"))]
-        samples_tsv = os.path.join(batch_dir, "samples.tsv")
-        states = None
-        if os.path.exists(samples_tsv):
-            states = {row["sra_id"]: row["state"] for row in read_csv(samples_tsv, delimiter="\t")}
-        batches.append((batch_dir, ids, states))
-    return batches
+def read_table(staging_dir):
+    """Return {sra_id: row} of <staging-dir>/samples.tsv."""
+    path = os.path.join(staging_dir, TABLE)
+    return {row["sra_id"]: row for row in read_csv(path, delimiter="\t")} if os.path.exists(path) else {}
+
+
+def write_table(staging_dir, table):
+    other_steps = sorted({key for row in table.values() for key in row} - set(SAMPLE_COLUMNS) - set(STEPS))
+    path = os.path.join(staging_dir, TABLE)
+    with open(path + ".tmp", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SAMPLE_COLUMNS + STEPS + other_steps, delimiter="\t", restval="-")
+        writer.writeheader()
+        writer.writerows(table.values())
+    os.replace(path + ".tmp", path)
 
 
 def next_batch_name(staging_dir):
@@ -137,25 +172,15 @@ def next_batch_name(staging_dir):
     return f"batch_{max(numbers) + 1:04d}"
 
 
-def sample_states(ids, batches, input_dir, max_batches):
+def sample_states(ids, table, input_dir, max_batches):
     """Return {sra_id: one of STATES}."""
     downloaded = subdirs(input_dir)
-    running, last_state, n_batches = set(), {}, Counter()
-    for _, batch_ids, states in batches:
-        n_batches.update(batch_ids)
-        if states is None:
-            running.update(batch_ids)
-        else:
-            last_state.update({sra_id: states.get(sra_id, "retry") for sra_id in batch_ids})
-
     result = {}
     for sra_id in ids:
-        state = last_state.get(sra_id)
-        if sra_id in running:
-            result[sra_id] = "running"
-        elif state in ("done", "failed"):
-            result[sra_id] = state
-        elif state == "retry" and n_batches[sra_id] >= max_batches:
+        row = table.get(sra_id)
+        if row and row["state"] in FINAL_STATES | {"running"}:
+            result[sra_id] = row["state"]
+        elif row and int(row["batches"]) >= max_batches:
             result[sra_id] = "retry limit"
         elif sra_id not in downloaded:
             result[sra_id] = "not downloaded"
@@ -181,26 +206,28 @@ def choose_batch(eligible, reserve_of, budget):
     return batch, too_large, no_size
 
 
-def next_batch(args):
-    """Return (sample states, batches, next batch, too large, no size)."""
-    ids = read_ids(args.ids)
-    batches = read_batches(args.staging_dir)
-    states = sample_states(ids, batches, args.input_dir, args.max_batches)
-    eligible = [sra_id for sra_id in ids if states[sra_id] == "eligible"]
-    fastq_sizes = read_fastq_sizes(args.runinfo)
+def load_states(args):
+    """Return (status table, {sra_id: state} for the samples of --ids)."""
+    table = read_table(args.staging_dir)
+    return table, sample_states(read_ids(args.ids), table, args.input_dir, args.max_batches)
+
+
+def next_batch(args, states):
+    """Return ([(sra_id, reserved bytes)], too large, no size) for the next batch."""
+    eligible = [sra_id for sra_id, state in states.items() if state == "eligible"]
+    fastq_sizes = read_fastq_sizes(args.runinfo or os.path.normpath(args.input_dir) + ".download/runinfo.csv")
 
     def reserve_of(sra_id):
         if sra_id in fastq_sizes:
             return int(args.reserve_factor * fastq_sizes[sra_id])
         return int(args.input_factor * dir_bytes(os.path.join(args.input_dir, sra_id)))
 
-    batch, too_large, no_size = choose_batch(eligible, reserve_of, args.disk_budget)
-    return states, batches, batch, too_large, no_size
+    return choose_batch(eligible, reserve_of, args.disk_budget)
 
 
 def print_batch(name, batch, too_large, no_size, budget):
     reserved = sum(size for _, size in batch)
-    print(f"{name}: {len(batch)} samples, reserve {reserved / 1e9:,.0f} GB of {budget / 1e9:,.0f} GB", flush=True)
+    print(f"{name}: {len(batch)} samples, reserve {reserved / 1e9:,.1f} GB of {budget / 1e9:,.1f} GB", flush=True)
     skipped_samples = (("reserve larger than the budget", too_large), ("no runinfo and an empty input dir", no_size))
     for label, skipped in skipped_samples:
         if skipped:
@@ -212,17 +239,51 @@ def write_batch_csv(path, batch):
         csv.writer(f).writerows([("sra_id", "reserve_bytes")] + batch)
 
 
-def plan(args):
-    states, batches, batch, too_large, no_size = next_batch(args)
+def print_states(args, states, table):
     counts = Counter(states.values())
-    print(f"{args.ids}: {len(states)} samples, {len(batches)} batches in {args.staging_dir}")
+    print(f"{args.ids}: {len(states)} samples, {len(table)} of them in {os.path.join(args.staging_dir, TABLE)}")
     for state in STATES:
         print(f"  {state:<15} {counts[state]:>8}")
     print()
+
+
+def plan(args):
+    table, states = load_states(args)
+    batch, too_large, no_size = next_batch(args, states)
+    print_states(args, states, table)
     print_batch(f"next batch {next_batch_name(args.staging_dir)}", batch, too_large, no_size, args.disk_budget)
     if args.out:
         write_batch_csv(args.out, batch)
         print(f"  written to {args.out}")
+
+
+def show_sample(args):
+    row = read_table(args.staging_dir).get(args.sra_id, {"sra_id": args.sra_id, "state": "not in any batch"})
+    for column, value in row.items():
+        print(f"{column:<28} {value}")
+
+
+def status(args):
+    table, states = load_states(args)
+    print_states(args, states, table)
+    rows = [row for row in table.values() if not args.batch or row["batch"] == args.batch]
+
+    shown = ("running", "done", "retry", "failed", "promoted")
+    print(f"{'last batch':<12} {'samples':>8}" + "".join(f" {state:>8}" for state in shown) + f" {'gate yes':>9}")
+    for name in sorted({row["batch"] for row in rows}):
+        batch_rows = [row for row in rows if row["batch"] == name]
+        counts = Counter(row["state"] for row in batch_rows)
+        gate = sum(row["gate"] == "yes" for row in batch_rows)
+        print(f"{name:<12} {len(batch_rows):>8}" + "".join(f" {counts[state]:>8}" for state in shown) + f" {gate:>9}")
+
+    causes = Counter(cause for row in rows if row["state"] == "failed" for cause in row["reason"].split(", "))
+    print("\nfailed samples by cause (one sample can have more than one cause):")
+    for cause, count in causes.most_common():
+        print(f"  {count:>8}  {cause}")
+    at_limit = [row for row in rows if states.get(row["sra_id"]) == "retry limit"]
+    print(f"\nsamples at the retry limit: {len(at_limit)}")
+    for row in at_limit[:10]:
+        print(f"  {row['sra_id']}  {row['reason']}")
 
 
 # --- results of a batch ---
@@ -243,19 +304,26 @@ def passes_size_gate(batch_dir, sra_id):
     return file_size(sylph) > EMPTY_SYLPH_BYTES and file_size(contigs) > 0
 
 
-def sample_result(steps, gate):
-    """Return (state, reason) from the last trace row of each step and the size gate."""
+def sample_result(steps, gate, completed):
+    """Return (state, reason) from the last trace row of each step, the size gate and how the run ended."""
     failed = {process: row["exit"] for process, row in steps.items() if row["status"] not in OK_STATUS}
-    permanent = {process: code for process, code in failed.items() if code not in TRANSIENT_EXITS}
+    missing = ENDPOINTS - set(steps)
     if failed:
         reason = ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items()))
-        return ("failed" if permanent else "retry"), reason
-    missing = ENDPOINTS - set(steps)
-    if missing:
-        return "retry", "not run: " + ", ".join(sorted(missing))
-    if not gate:
-        return "failed", "size gate"
-    return "done", ""
+        state = "failed" if any(code not in TRANSIENT_EXITS for code in failed.values()) else "retry"
+    elif missing and not completed:
+        state, reason = "retry", "not run: " + ", ".join(sorted(missing))
+    elif not gate:
+        state, reason = "failed", "size gate"
+    else:
+        state, reason = "done", ""
+    if state == "failed" and not completed:
+        return "retry", f"run stopped; {reason}"
+    return state, reason
+
+
+def step_status(trace_row):
+    return "ok" if trace_row["status"] in OK_STATUS else f"failed {trace_row['exit']}"
 
 
 def copy_failed_logs(batch_dir, steps):
@@ -270,46 +338,77 @@ def copy_failed_logs(batch_dir, steps):
                     shutil.copy2(os.path.join(row["workdir"], name), target)
 
 
-def finish_batch(batch_dir, nextflow, completed):
-    """Write samples.tsv, copy the logs of failed tasks and remove the work dir of the last run."""
+def write_traces(staging_dir):
+    """Rebuild <staging-dir>/traces.tsv from the traces of all batches."""
+    paths = sorted(glob.glob(os.path.join(staging_dir, "batch_*", "pipeline_info", "*", "execution_trace.tsv")))
+    columns = ["batch", "run"]
+    for path in paths:
+        with open(path, newline="") as f:
+            columns += [column for column in next(csv.reader(f, delimiter="\t"), []) if column not in columns]
+    target = os.path.join(staging_dir, TRACES)
+    with open(target + ".tmp", "w", newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=columns, delimiter="\t")
+        writer.writeheader()
+        for path in paths:
+            run_dir = os.path.dirname(path)
+            batch = os.path.basename(os.path.dirname(os.path.dirname(run_dir)))
+            with open(path, newline="") as f:
+                for row in csv.DictReader(f, delimiter="\t"):
+                    writer.writerow({"batch": batch, "run": os.path.basename(run_dir), **row})
+    os.replace(target + ".tmp", target)
+
+
+def start_batch(staging_dir, table, name, ids):
+    """Write a copy of the table with the samples of the batch in state running."""
+    started = dict(table)
+    for sra_id in ids:
+        batches = int(table.get(sra_id, {}).get("batches", 0)) + 1
+        started[sra_id] = {"sra_id": sra_id, "state": "running", "batch": name, "batches": batches}
+    write_table(staging_dir, started)
+
+
+def finish_batch(staging_dir, name, nextflow, completed):
+    """Write the results of the batch to samples.tsv, copy the logs of failed tasks, remove the work dir."""
+    batch_dir = os.path.join(staging_dir, name)
     ids = [row["sra_id"] for row in read_csv(os.path.join(batch_dir, "batch.csv"))]
     steps = read_trace(batch_dir)
-    rows = []
+    table = read_table(staging_dir)
+    counts = Counter()
     for sra_id in ids:
         gate = passes_size_gate(batch_dir, sra_id)
-        state, reason = sample_result(steps.get(sra_id, {}), gate)
-        if state == "failed" and not completed:
-            state, reason = "retry", f"run stopped; {reason}"
-        rows.append((sra_id, state, "yes" if gate else "no", reason))
+        state, reason = sample_result(steps.get(sra_id, {}), gate, completed)
+        table[sra_id] = {
+            "sra_id": sra_id, "state": state, "batch": name, "batches": table.get(sra_id, {}).get("batches", 1),
+            "gate": "yes" if gate else "no", "reason": reason,
+            **{process: step_status(row) for process, row in steps.get(sra_id, {}).items()},
+        }
+        counts[state] += 1
     copy_failed_logs(batch_dir, steps)
-    temporary = os.path.join(batch_dir, "samples.tsv.tmp")
-    with open(temporary, "w", newline="") as f:
-        csv.writer(f, delimiter="\t").writerows([("sra_id", "state", "gate", "reason")] + rows)
-    os.replace(temporary, os.path.join(batch_dir, "samples.tsv"))
+    write_table(staging_dir, table)
+    write_traces(staging_dir)
     subprocess.run([nextflow, "clean", "-f", "-q"])
-    counts = Counter(state for _, state, _, _ in rows)
     summary = ", ".join(f"{counts[state]} {state}" for state in ("done", "retry", "failed"))
-    print(f"{os.path.basename(batch_dir)} finished: {summary}", flush=True)
+    print(f"{name} finished: {summary}", flush=True)
 
 
 def run(args):
-    for batch_dir, _, states in read_batches(args.staging_dir):
-        if states is None:
-            print(f"{os.path.basename(batch_dir)} has no samples.tsv, so its run stopped. Finish it first.", flush=True)
-            finish_batch(batch_dir, args.nextflow, completed=False)
+    for name in sorted({row["batch"] for row in read_table(args.staging_dir).values() if row["state"] == "running"}):
+        print(f"{name} has samples in state running, so its run stopped. Finish it first.", flush=True)
+        finish_batch(args.staging_dir, name, args.nextflow, completed=False)
 
-    nextflow_run, signals = {}, []
+    nextflow_run, signals = None, []
 
     def pass_on(signum, frame):
         signals.append(signum)
-        if "process" in nextflow_run:
-            nextflow_run["process"].send_signal(signum)
+        if nextflow_run:
+            nextflow_run.send_signal(signum)
 
     signal.signal(signal.SIGTERM, pass_on)
     signal.signal(signal.SIGINT, pass_on)
     n_run = 0
     while (args.n_batches is None or n_run < args.n_batches) and not signals:
-        _, _, batch, too_large, no_size = next_batch(args)
+        table, states = load_states(args)
+        batch, too_large, no_size = next_batch(args, states)
         if not batch:
             print("no eligible sample fits the budget: stop")
             return
@@ -318,51 +417,152 @@ def run(args):
         os.makedirs(batch_dir)
         batch_csv = os.path.join(batch_dir, "batch.csv")
         write_batch_csv(batch_csv, batch)
+        start_batch(args.staging_dir, table, name, [sra_id for sra_id, _ in batch])
         print_batch(name, batch, too_large, no_size, args.disk_budget)
 
-        nextflow_run["process"] = subprocess.Popen([
+        nextflow_run = subprocess.Popen([
             args.nextflow, "-log", os.path.join(batch_dir, "nextflow.log"), "run", args.pipeline,
             "--input", batch_csv, "--indir", args.input_dir, "--outdir", batch_dir,
             "--limit", str(len(batch)), "-ansi-log", "false"])
-        returncode = nextflow_run["process"].wait()
+        returncode = nextflow_run.wait()
         if not read_trace(batch_dir):
-            os.remove(batch_csv)
+            write_table(args.staging_dir, table)
             raise SystemExit(f"{name}: nextflow exited with {returncode} before any task ended. "
                              f"See {batch_dir}/nextflow.log")
-        finish_batch(batch_dir, args.nextflow, completed=returncode == 0 and not signals)
+        finish_batch(args.staging_dir, name, args.nextflow, completed=returncode == 0 and not signals)
         n_run += 1
     if signals:
         raise SystemExit(f"stopped by signal {signals[0]}")
 
 
+# --- promote ---
+
+def step_dirs(published):
+    """Return the step dirs of published/ relative to it, for example branch_3/02_binning."""
+    steps = []
+    for name in sorted(subdirs(published)):
+        if name.startswith("branch_"):
+            steps += [os.path.join(name, step) for step in sorted(subdirs(os.path.join(published, name)))]
+        else:
+            steps.append(name)
+    return steps
+
+
+def sample_moves(published, steps, sra_id, valid_dir, logs_dir):
+    """Return [(source, target)] for the dirs of one sample that are still in published/."""
+    moves = []
+    for step in steps:
+        source = os.path.join(published, step, sra_id)
+        if not os.path.isdir(source):
+            continue
+        if step in LOG_STEPS or set(os.listdir(source)) <= {"logs"}:
+            moves.append((source, os.path.join(logs_dir, step, sra_id)))
+            continue
+        logs = os.path.join(source, "logs")
+        if os.path.isdir(logs):
+            moves.append((logs, os.path.join(logs_dir, step, sra_id, "logs")))
+        moves.append((source, os.path.join(valid_dir, step, sra_id)))
+    return moves
+
+
+def plan_promote(args, table):
+    """Return ([(row, moves)] ready to promote, conflicts, samples with nothing to move)."""
+    ready, conflicts, missing, steps_of = [], [], [], {}
+    for row in table.values():
+        if row["gate"] != "yes" or row["state"] not in ("done", "failed"):
+            continue
+        published = os.path.join(args.staging_dir, row["batch"], "published")
+        if published not in steps_of:
+            steps_of[published] = step_dirs(published)
+        moves = sample_moves(published, steps_of[published], row["sra_id"], args.valid_dir, args.logs_dir)
+        taken = [target for _, target in moves if os.path.exists(target)]
+        if taken:
+            conflicts.append(f"{row['sra_id']}: {taken[0]} exists")
+        elif moves or os.path.isdir(os.path.join(args.valid_dir, "04_shared_assembly", row["sra_id"])):
+            ready.append((row, moves))
+        else:
+            missing.append(row["sra_id"])
+    return ready, conflicts, missing
+
+
+def promote(args):
+    table = read_table(args.staging_dir)
+    if any(row["state"] == "running" for row in table.values()):
+        raise SystemExit("samples.tsv has samples in state running. Wait until run ends, "
+                         "or start run again to finish a stopped batch.")
+    ready, conflicts, missing = plan_promote(args, table)
+    targets = [target for _, moves in ready for _, target in moves]
+    to_valid = sum(target.startswith(os.path.join(args.valid_dir, "")) for target in targets)
+    states = Counter(row["state"] for row, _ in ready)
+    print(f"ready      {len(ready):>8}  (done {states['done']}, failed {states['failed']}), "
+          f"{to_valid} dirs to {args.valid_dir}, {len(targets) - to_valid} to {args.logs_dir}")
+    print(f"conflict   {len(conflicts):>8}  a target exists, so nothing of the sample moves")
+    print(f"missing    {len(missing):>8}  nothing in published/ and no 04_shared_assembly in --valid-dir")
+    for line in conflicts[:5] + missing[:5]:
+        print(f"  {line}")
+    if not args.yes:
+        print("dry run: nothing moved. Give --yes to move.")
+        return
+
+    log_path = os.path.join(args.staging_dir, "promote.csv")
+    new_log = not os.path.exists(log_path)
+    with open(log_path, "a", newline="", buffering=1) as f:
+        log = csv.writer(f)
+        if new_log:
+            log.writerow(["time_utc", "sra_id", "batch", "source", "target"])
+        try:
+            for n, (row, moves) in enumerate(ready, 1):
+                for source, target in moves:
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    os.rename(source, target)
+                    log.writerow([time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), row["sra_id"], row["batch"],
+                                  source, target])
+                row["state"] = "promoted"
+                if n % 1000 == 0:
+                    write_table(args.staging_dir, table)
+        finally:
+            write_table(args.staging_dir, table)
+    print(f"promoted {len(ready)} samples")
+
+
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["plan", "run"])
-    parser.add_argument("--ids", required=True, help="CSV with an sra_id column, in the order to process")
-    parser.add_argument("--input-dir", required=True, help="dir with one subdir for each downloaded sample")
-    parser.add_argument("--staging-dir", required=True, help="dir with the batch dirs batch_NNNN/")
-    parser.add_argument("--runinfo", help="default: <input-dir>.download/runinfo.csv")
-    parser.add_argument("--disk-budget", required=True, type=parse_size, help="for example 20T (T = 10^12 bytes)")
-    parser.add_argument("--reserve-factor", type=float, default=5.3, help="reserve / FASTQ size from runinfo")
-    parser.add_argument("--input-factor", type=float, default=36.0,
+    staging = argparse.ArgumentParser(add_help=False)
+    staging.add_argument("--staging-dir", required=True, help="dir with samples.tsv and the batch dirs batch_NNNN/")
+    samples = argparse.ArgumentParser(add_help=False)
+    samples.add_argument("--ids", required=True, help="CSV with an sra_id column, in the order to process")
+    samples.add_argument("--input-dir", required=True, help="dir with one subdir for each downloaded sample")
+    samples.add_argument("--max-batches", type=int, default=2, help="batches for each sample before retry limit")
+    budget = argparse.ArgumentParser(add_help=False)
+    budget.add_argument("--disk-budget", type=parse_size, required=True, help="for example 20T (T = 10^12 bytes)")
+    budget.add_argument("--runinfo", help="default: <input-dir>.download/runinfo.csv")
+    budget.add_argument("--reserve-factor", type=float, default=5.3, help="reserve / FASTQ size from runinfo")
+    budget.add_argument("--input-factor", type=float, default=36.0,
                         help="reserve / size of the input dir, when runinfo has no bases")
-    parser.add_argument("--max-batches", type=int, default=2, help="batches for each sample before retry limit")
-    parser.add_argument("--out", help="plan: write the next batch to this CSV")
-    parser.add_argument("--n-batches", type=int, help="run: stop after this many batches (default: no limit)")
-    parser.add_argument("--pipeline", default=os.path.normpath(DEFAULT_PIPELINE), help="run: the main .nf file")
-    parser.add_argument("--nextflow", default="nextflow", help="run: the nextflow command")
-    args = parser.parse_args()
-    args.runinfo = args.runinfo or os.path.normpath(args.input_dir) + ".download/runinfo.csv"
-    return args
 
-
-def main():
-    args = parse_args()
-    if args.command == "plan":
-        plan(args)
-    elif args.command == "run":
-        run(args)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("plan", parents=[staging, samples, budget], help="print the next batch")
+    command.add_argument("--out", help="write the next batch to this CSV")
+    command.set_defaults(func=plan)
+    command = commands.add_parser("run", parents=[staging, samples, budget], help="run batches")
+    command.add_argument("--n-batches", type=int, help="stop after this many batches (default: no limit)")
+    command.add_argument("--pipeline", default=os.path.normpath(DEFAULT_PIPELINE), help="the main .nf file")
+    command.add_argument("--nextflow", default="nextflow", help="the nextflow command")
+    command.set_defaults(func=run)
+    command = commands.add_parser("status", parents=[staging, samples], help="print the sample states")
+    command.add_argument("--batch", help="only the samples whose last batch is this one")
+    command.set_defaults(func=status)
+    command = commands.add_parser("sample", parents=[staging], help="print the row of one sample")
+    command.add_argument("sra_id")
+    command.set_defaults(func=show_sample)
+    command = commands.add_parser("promote", parents=[staging], help="move the accepted samples")
+    command.add_argument("--valid-dir", required=True, help="the target of the results, for example gutmap/valid")
+    command.add_argument("--logs-dir", required=True, help="the target of the logs, for example gutmap/valid-logs")
+    command.add_argument("--yes", action="store_true", help="move the dirs (default: only print)")
+    command.set_defaults(func=promote)
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    args.func(args)
