@@ -8,9 +8,10 @@
     batches.py promote --staging-dir S --valid-dir VALID --logs-dir LOGS [--yes]
 
 <staging-dir>/samples.tsv is the only record of the sample states. It has one row for
-each sample that was in a batch: state, last batch, number of batches, size gate,
-reason, and one column for each pipeline step (ok, failed <exit code>, or - when the
-step did not run). Only one run or promote at a time can use a staging dir.
+each sample that was in a batch: state, last batch, number of batches, size gate, the
+sizes of the sylph profile and the contigs, reason, and one column for each pipeline
+step (ok, failed <exit code>, or - when the step did not run). Only one run or promote
+at a time can use a staging dir.
 
 plan: each sample reserves --reserve-factor x its FASTQ size from runinfo
 (2 x bases + 120 B x spots), or else --input-factor x the size of its dir in
@@ -20,15 +21,16 @@ state too large or no size to <staging-dir>/not_planned.tsv.
 
 run: creates <staging-dir>/batch_NNNN/ with batch.csv, sets its samples to running and
 runs the pipeline with that dir as outdir. Then it writes the results to samples.tsv,
-copies the logs of failed tasks to failed_logs/, rebuilds <staging-dir>/traces.tsv
+copies the logs of failed tasks to failed_logs/, removes from published/ the outputs
+of the samples that promote does not take (their logs stay), rebuilds <staging-dir>/traces.tsv
 (the traces of all batches, with the columns batch and run) and runs `nextflow clean
 -f`. The traces stay in the batch dirs. It repeats until no sample is eligible or
 after --n-batches batches. Start it from the launch dir of the pipeline. At its start,
 it finishes the batches of a stopped run. On SIGTERM or SIGINT, it passes the signal
 to nextflow, finishes the batch and stops.
 
-status: the sample states, the result of each last batch, the causes of the failed
-samples and the samples at the retry limit. sample: the row of one sample.
+status: the sample states, the result of each last batch and the causes of the failed
+samples. sample: the row of one sample.
 
 promote: moves the dirs of the samples with gate yes and state done or failed from
 <batch>/published/ to the same paths in --valid-dir and --logs-dir:
@@ -42,23 +44,23 @@ each move to <staging-dir>/promote.csv and sets the state promoted. After a stop
 moves only what is still in published/.
 
 Sample states:
-  running, done, retry, failed, promoted   the state in samples.tsv
-  retry limit     state retry after --max-batches batches
+  running, done, failed, stopped, promoted   the state in samples.tsv
   not downloaded  not in samples.tsv and not in --input-dir
   too large       the reserve is larger than --disk-budget
   no size         no bases in runinfo and an empty dir in --input-dir
-  eligible        new samples in --input-dir, and samples to retry
+  eligible        new samples in --input-dir, and stopped samples
 
 The result of a batch for each sample:
-  failed  a task failed with an exit code that is not transient, or no task failed
-          and the size gate failed
-  retry   a task failed with a transient exit code
-  done    no task failed and the size gate passed
-If the run did not end normally, each sample that is not done gets retry and the
-reason "run stopped", followed by the tasks that failed before the stop. A stopped
-task can end with any code, and a step can be missing because the run stopped. If the
-run ended normally, a step that did not run was skipped on purpose, for example because
-MEGAHIT made no contigs.
+  done     no task failed and the size gate passed
+  failed   a task failed, or the size gate failed. This is final. A retry is set in
+           the code of a process, with more resources, for example FILTER_AND_ANNOTATE.
+  stopped  the run did not end normally, and a task of the sample has the status
+           ABORTED, or no task failed and an endpoint did not run. A later batch runs
+           the sample again.
+If the run ended normally, a step that did not run was skipped on purpose, for example
+because MEGAHIT made no contigs. After a stop, such a sample runs again.
+promote takes the samples with gate yes and state done or failed. run removes the
+outputs of all other samples of the batch: stopped, and gate no.
 
 Python 3.7 or later, standard library only.
 """
@@ -77,21 +79,20 @@ RUN_ACCESSION = re.compile(r"[SED]RR\d+")
 BATCH_NAME = re.compile(r"batch_(\d+)")
 FASTQ_BYTES_PER_SPOT = 120
 SIZE_UNITS = {"": 1, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
-STATES = ["running", "done", "failed", "promoted", "retry limit", "not downloaded", "too large", "no size", "eligible"]
+STATES = ["running", "done", "failed", "promoted", "not downloaded", "too large", "no size", "eligible"]
 NOT_PLANNED_STATES = ("too large", "no size")
 FINAL_STATES = {"done", "failed", "promoted"}
 TABLE = "samples.tsv"
 TRACES = "traces.tsv"
 NOT_PLANNED = "not_planned.tsv"
 LOG_STEPS = {"02_fastp_qc", "03_non_human_reads"}
-SAMPLE_COLUMNS = ["sra_id", "state", "batch", "batches", "gate", "reason"]
+SAMPLE_COLUMNS = ["sra_id", "state", "batch", "batches", "gate", "sylph_bytes", "contigs_bytes", "reason"]
 STEPS = [
     "CHECK_AND_CONVERT_READS", "FASTP_QC", "REMOVE_HUMAN_READS", "MEGAHIT_ASSEMBLY", "SYLPH_TAXONOMY",
     "BAKTA_ANNOTATION", "CREATE_CATALOG_AND_INDEX", "ALIGN_AND_QUANTIFY_READS", "CALCULATE_TPM_AND_ANNOTATE",
     "MAP_FOR_BINNING", "METABAT2_BINNING", "CHECKM_QA", "FILTER_AND_ANNOTATE",
 ]
 OK_STATUS = {"COMPLETED", "CACHED"}
-TRANSIENT_EXITS = {"-", "12", "130", "137", "140", "143", "247"}
 ENDPOINTS = {"SYLPH_TAXONOMY", "CALCULATE_TPM_AND_ANNOTATE", "FILTER_AND_ANNOTATE"}
 # A sylph profile with only its header has 218 bytes.
 EMPTY_SYLPH_BYTES = 218
@@ -178,7 +179,7 @@ def next_batch_name(staging_dir):
     return f"batch_{max(numbers) + 1:04d}"
 
 
-def sample_states(ids, table, input_dir, max_batches):
+def sample_states(ids, table, input_dir):
     """Return {sra_id: one of STATES}."""
     downloaded = subdirs(input_dir)
     result = {}
@@ -186,8 +187,6 @@ def sample_states(ids, table, input_dir, max_batches):
         row = table.get(sra_id)
         if row and row["state"] in FINAL_STATES | {"running"}:
             result[sra_id] = row["state"]
-        elif row and int(row["batches"]) >= max_batches:
-            result[sra_id] = "retry limit"
         elif sra_id not in downloaded:
             result[sra_id] = "not downloaded"
         else:
@@ -210,7 +209,7 @@ def reserves(args, states):
 def load_states(args):
     """Return (status table, {sra_id: state} for the samples of --ids, {sra_id: reserved bytes})."""
     table = read_table(args.staging_dir)
-    states = sample_states(read_ids(args.ids), table, args.input_dir, args.max_batches)
+    states = sample_states(read_ids(args.ids), table, args.input_dir)
     reserve = reserves(args, states)
     for sra_id, reserved in reserve.items():
         if reserved == 0:
@@ -285,7 +284,7 @@ def status(args):
     print_states(args, states, table)
     rows = [row for row in table.values() if not args.batch or row["batch"] == args.batch]
 
-    shown = ("running", "done", "retry", "failed", "promoted")
+    shown = ("running", "done", "stopped", "failed", "promoted")
     print(f"{'last batch':<12} {'samples':>8}" + "".join(f" {state:>8}" for state in shown) + f" {'gate yes':>9}")
     for name in sorted({row["batch"] for row in rows}):
         batch_rows = [row for row in rows if row["batch"] == name]
@@ -297,10 +296,6 @@ def status(args):
     print("\nfailed samples by cause (one sample can have more than one cause):")
     for cause, count in causes.most_common():
         print(f"  {count:>8}  {cause}")
-    at_limit = [row for row in rows if states.get(row["sra_id"]) == "retry limit"]
-    print(f"\nsamples at the retry limit: {len(at_limit)}")
-    for row in at_limit[:10]:
-        print(f"  {row['sra_id']}  {row['reason']}")
 
 
 # --- results of a batch ---
@@ -314,26 +309,24 @@ def read_trace(batch_dir):
     return steps
 
 
-def passes_size_gate(batch_dir, sra_id):
-    published = os.path.join(batch_dir, "published")
+def gate_sizes(published, sra_id):
+    """Return (bytes of the sylph profile, bytes of the contigs) of one sample in published/."""
     sylph = os.path.join(published, "branch_1", "01_taxonomy", sra_id, f"{sra_id}.sylph_profile.tsv")
     contigs = os.path.join(published, "04_shared_assembly", sra_id, "final.contigs.fa")
-    return file_size(sylph) > EMPTY_SYLPH_BYTES and file_size(contigs) > 0
+    return file_size(sylph), file_size(contigs)
 
 
 def sample_result(steps, gate, completed):
     """Return (state, reason) from the last trace row of each step, the size gate and how the run ended."""
     failed = {process: row["exit"] for process, row in steps.items() if row["status"] not in OK_STATUS}
-    if not failed and gate and (completed or ENDPOINTS <= set(steps)):
-        return "done", ""
-    if not completed:
-        before_stop = ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items())
-                                if steps[process]["status"] != "ABORTED")
-        return "retry", f"run stopped; {before_stop}" if before_stop else "run stopped"
+    aborted = any(row["status"] == "ABORTED" for row in steps.values())
+    if not completed and (aborted or (not failed and not ENDPOINTS <= set(steps))):
+        return "stopped", "run stopped"
     if failed:
-        reason = ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items()))
-        return ("failed" if set(failed.values()) - TRANSIENT_EXITS else "retry"), reason
-    return "failed", "size gate"
+        return "failed", ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items()))
+    if not gate:
+        return "failed", "size gate"
+    return "done", ""
 
 
 def step_status(trace_row):
@@ -381,28 +374,53 @@ def start_batch(staging_dir, table, name, ids):
     write_table(staging_dir, started)
 
 
+def remove_outputs(published, steps, sra_id):
+    """Remove the outputs of one sample from published/. Keep its logs."""
+    for step in steps:
+        sample_dir = os.path.join(published, step, sra_id)
+        if step in LOG_STEPS or not os.path.isdir(sample_dir):
+            continue
+        for name in os.listdir(sample_dir):
+            path = os.path.join(sample_dir, name)
+            if name == "logs":
+                continue
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+
+
 def finish_batch(staging_dir, name, nextflow, completed):
-    """Write the results of the batch to samples.tsv, copy the logs of failed tasks, remove the work dir."""
+    """Write the results of the batch to samples.tsv, copy the logs of failed tasks, remove the outputs that
+    promote does not take, and remove the work dir."""
     batch_dir = os.path.join(staging_dir, name)
+    published = os.path.join(batch_dir, "published")
     ids = [row["sra_id"] for row in read_csv(os.path.join(batch_dir, "batch.csv"))]
     steps = read_trace(batch_dir)
     table = read_table(staging_dir)
     counts = Counter()
+    not_promoted = []
     for sra_id in ids:
-        gate = passes_size_gate(batch_dir, sra_id)
+        sylph, contigs = gate_sizes(published, sra_id)
+        gate = sylph > EMPTY_SYLPH_BYTES and contigs > 0
         state, reason = sample_result(steps.get(sra_id, {}), gate, completed)
         table[sra_id] = {
             "sra_id": sra_id, "state": state, "batch": name, "batches": table.get(sra_id, {}).get("batches", 1),
-            "gate": "yes" if gate else "no", "reason": reason,
+            "gate": "yes" if gate else "no", "sylph_bytes": sylph, "contigs_bytes": contigs, "reason": reason,
             **{process: step_status(row) for process, row in steps.get(sra_id, {}).items()},
         }
         counts[state] += 1
+        if state == "stopped" or not gate:
+            not_promoted.append(sra_id)
     copy_failed_logs(batch_dir, steps)
     write_table(staging_dir, table)
+    published_steps = step_dirs(published)
+    for sra_id in not_promoted:
+        remove_outputs(published, published_steps, sra_id)
     write_traces(staging_dir)
     subprocess.run([nextflow, "clean", "-f", "-q"])
-    summary = ", ".join(f"{counts[state]} {state}" for state in ("done", "retry", "failed"))
-    print(f"{name} finished: {summary}", flush=True)
+    summary = ", ".join(f"{counts[state]} {state}" for state in ("done", "stopped", "failed"))
+    print(f"{name} finished: {summary}; outputs removed for {len(not_promoted)} samples", flush=True)
 
 
 def run(args):
@@ -547,7 +565,6 @@ def parse_args():
     samples = argparse.ArgumentParser(add_help=False)
     samples.add_argument("--ids", required=True, help="CSV with an sra_id column, in the order to process")
     samples.add_argument("--input-dir", required=True, help="dir with one subdir for each downloaded sample")
-    samples.add_argument("--max-batches", type=int, default=2, help="batches for each sample before retry limit")
     budget = argparse.ArgumentParser(add_help=False)
     budget.add_argument("--disk-budget", type=parse_size, required=True, help="for example 20T (T = 10^12 bytes)")
     budget.add_argument("--runinfo", help="default: <input-dir>.download/runinfo.csv")

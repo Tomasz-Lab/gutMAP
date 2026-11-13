@@ -21,7 +21,8 @@
     batch.csv                          the samples of the batch and their disk reserve
     nextflow.log
     pipeline_info/<run>/execution_trace.tsv
-    published/<step>/<id>/             the outputs of the pipeline, until promote
+    published/<step>/<id>/             the outputs of the pipeline, until promote; only the logs
+                                       of the samples that promote does not take
     failed_logs/<process>/<id>/        the logs of the failed tasks
 
 <valid-dir>/<step>/<id>/               accepted results, without logs
@@ -34,20 +35,25 @@ The input dir, the staging dir, the valid dir and the logs dir must be on one fi
 
 | State | Meaning | Next action |
 |---|---|---|
-| `eligible` | Downloaded and not in a batch yet, or `retry` below the limit | `run` puts it in a batch |
+| `eligible` | Downloaded and not in a batch yet, or `stopped` | `run` puts it in a batch |
 | `not downloaded` | Not in the input dir | Download it |
 | `too large` | Downloaded, but its disk reserve is larger than `--disk-budget` | Increase the budget, or leave it out |
 | `no size` | Downloaded, but runinfo has no bases for it and its input dir is empty | Download it again |
 | `running` | In the batch that runs now, or in a batch whose run stopped | The next `run` finishes the batch |
 | `done` | No task failed and the size gate passed | `promote` |
-| `failed` | A task failed with an exit code that is not transient, or the size gate failed | `promote` if the gate passed, else none |
-| `retry` | A task failed with a transient exit code, or the run stopped (reason `run stopped`) | `run` tries it again |
-| `retry limit` | `retry` after `--max-batches` batches (default 2) | None |
+| `failed` | A task failed, or the size gate failed. This is final. | `promote` if the gate passed, else none |
+| `stopped` | The run stopped before the sample ended (reason `run stopped`) | `run` puts it in a later batch |
 | `promoted` | The results are in the valid dir | None |
 
 The size gate is the acceptance rule of the dataset: the sylph profile is larger than 218 bytes (more than the header) and the contigs file is not empty. A step that did not run because its input was empty, for example no bins, is not a failure.
 
-`samples.tsv` also has one column for each pipeline step: `ok`, `failed <exit code>`, or `-` when the step did not run.
+Only Nextflow retries a task, in the same run. A process that needs a retry sets it in its own code, with more resources for the retry, for example `FILTER_AND_ANNOTATE`. All other failed tasks are final (`errorStrategy = 'ignore'`). A sample does not go into a later batch because a task failed.
+
+If the run stopped, a sample gets `stopped` when one of its tasks has the status `ABORTED`, or when no task failed and an endpoint (`SYLPH_TAXONOMY`, `CALCULATE_TPM_AND_ANNOTATE`, `FILTER_AND_ANNOTATE`) did not run. All other samples of the batch get `done` or `failed`, as after a normal run. A sample whose branch a filter skipped (empty reads, no contigs) also gets `stopped`, and runs again.
+
+After each batch, `run` removes from `published/` the outputs of the samples that `promote` does not take: `stopped`, and gate `no`. The logs stay, and so do the dirs of `02_fastp_qc` and `03_non_human_reads`.
+
+`samples.tsv` also has the sizes of the sylph profile and the contigs (`sylph_bytes`, `contigs_bytes`), and one column for each pipeline step: `ok`, `failed <exit code>`, or `-` when the step did not run.
 
 ## Disk budget
 
@@ -95,7 +101,7 @@ Run the commands from the launch dir, the dir that holds `src/` and the launch-d
 
 ## Stop and continue
 
-- To stop the job, send `scancel --signal=TERM --batch JOBID`. `batches.py` stops Nextflow, writes the results of the batch and ends. The samples that are not `done` get `retry` and the reason `run stopped`.
+- To stop the job, send `scancel --signal=TERM --batch JOBID`. `batches.py` stops Nextflow, writes the results of the batch and ends. The samples that did not end get `stopped`, and a later batch runs them again.
 - At the time limit, Slurm sends the same signal 15 minutes before the end. Submit the job again to continue.
 - After a plain `scancel` or a node failure, the samples of the batch stay `running`. The next `run` finishes that batch first.
 - Each batch is a new Nextflow run without `-resume`. After each batch, `run` removes the work dir with `nextflow clean -f`.
