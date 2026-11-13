@@ -66,8 +66,8 @@ stop: ## stop the batches job: it finishes the batch that runs and ends
 	scancel --signal=TERM --batch --name=gutmap-batches --user=$(ME)
 
 status: ## sample states and the result of each batch
-	@$(call need,STAGING_DIR IDS INPUT_DIR)
-	python3 src/batches/batches.py status $(BATCH_ARGS)
+	@$(call need,STAGING_DIR IDS INPUT_DIR DISK_BUDGET)
+	python3 src/batches/batches.py status $(BATCH_ARGS) --disk-budget $(DISK_BUDGET)
 
 sample: ## the row of one sample (SAMPLE=SRR123)
 	@$(call need,STAGING_DIR SAMPLE)

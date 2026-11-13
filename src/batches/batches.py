@@ -3,7 +3,7 @@
 
     batches.py plan    --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--out next.csv]
     batches.py run     --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--n-batches N]
-    batches.py status  --staging-dir S --ids IDS.csv --input-dir IN [--batch batch_NNNN]
+    batches.py status  --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--batch batch_NNNN]
     batches.py sample  --staging-dir S SRA_ID
     batches.py promote --staging-dir S --valid-dir VALID --logs-dir LOGS [--yes]
 
@@ -15,7 +15,8 @@ step did not run). Only one run or promote at a time can use a staging dir.
 plan: each sample reserves --reserve-factor x its FASTQ size from runinfo
 (2 x bases + 120 B x spots), or else --input-factor x the size of its dir in
 --input-dir. The next batch takes the eligible samples in the order of --ids until
-the next sample does not fit in --disk-budget.
+the next sample does not fit in --disk-budget. plan and run write the samples in
+state too large or no size to <staging-dir>/not_planned.tsv.
 
 run: creates <staging-dir>/batch_NNNN/ with batch.csv, sets its samples to running and
 runs the pipeline with that dir as outdir. Then it writes the results to samples.tsv,
@@ -44,6 +45,8 @@ Sample states:
   running, done, retry, failed, promoted   the state in samples.tsv
   retry limit     state retry after --max-batches batches
   not downloaded  not in samples.tsv and not in --input-dir
+  too large       the reserve is larger than --disk-budget
+  no size         no bases in runinfo and an empty dir in --input-dir
   eligible        new samples in --input-dir, and samples to retry
 
 The result of a batch for each sample:
@@ -51,9 +54,10 @@ The result of a batch for each sample:
           and the size gate failed
   retry   a task failed with a transient exit code
   done    no task failed and the size gate passed
-If the run did not end normally, failed becomes retry, because a stopped task can end
-with any code, and a sample with an endpoint that did not run gets retry. If the run
-ended normally, a step that did not run was skipped on purpose, for example because
+If the run did not end normally, each sample that is not done gets retry and the
+reason "run stopped", followed by the tasks that failed before the stop. A stopped
+task can end with any code, and a step can be missing because the run stopped. If the
+run ended normally, a step that did not run was skipped on purpose, for example because
 MEGAHIT made no contigs.
 
 Python 3.7 or later, standard library only.
@@ -73,10 +77,12 @@ RUN_ACCESSION = re.compile(r"[SED]RR\d+")
 BATCH_NAME = re.compile(r"batch_(\d+)")
 FASTQ_BYTES_PER_SPOT = 120
 SIZE_UNITS = {"": 1, "K": 10**3, "M": 10**6, "G": 10**9, "T": 10**12}
-STATES = ["running", "done", "failed", "promoted", "retry limit", "not downloaded", "eligible"]
+STATES = ["running", "done", "failed", "promoted", "retry limit", "not downloaded", "too large", "no size", "eligible"]
+NOT_PLANNED_STATES = ("too large", "no size")
 FINAL_STATES = {"done", "failed", "promoted"}
 TABLE = "samples.tsv"
 TRACES = "traces.tsv"
+NOT_PLANNED = "not_planned.tsv"
 LOG_STEPS = {"02_fastp_qc", "03_non_human_reads"}
 SAMPLE_COLUMNS = ["sra_id", "state", "batch", "batches", "gate", "reason"]
 STEPS = [
@@ -189,32 +195,8 @@ def sample_states(ids, table, input_dir, max_batches):
     return result
 
 
-def choose_batch(eligible, reserve_of, budget):
-    """Return ([(sra_id, reserved bytes)], too large, no size) for the next batch."""
-    batch, total, too_large, no_size = [], 0, [], []
-    for sra_id in eligible:
-        reserved = reserve_of(sra_id)
-        if reserved == 0:
-            no_size.append(sra_id)
-        elif reserved > budget:
-            too_large.append(sra_id)
-        elif total + reserved > budget:
-            break
-        else:
-            batch.append((sra_id, reserved))
-            total += reserved
-    return batch, too_large, no_size
-
-
-def load_states(args):
-    """Return (status table, {sra_id: state} for the samples of --ids)."""
-    table = read_table(args.staging_dir)
-    return table, sample_states(read_ids(args.ids), table, args.input_dir, args.max_batches)
-
-
-def next_batch(args, states):
-    """Return ([(sra_id, reserved bytes)], too large, no size) for the next batch."""
-    eligible = [sra_id for sra_id, state in states.items() if state == "eligible"]
+def reserves(args, states):
+    """Return {sra_id: reserved bytes} for the eligible samples."""
     fastq_sizes = read_fastq_sizes(args.runinfo or os.path.normpath(args.input_dir) + ".download/runinfo.csv")
 
     def reserve_of(sra_id):
@@ -222,16 +204,50 @@ def next_batch(args, states):
             return int(args.reserve_factor * fastq_sizes[sra_id])
         return int(args.input_factor * dir_bytes(os.path.join(args.input_dir, sra_id)))
 
-    return choose_batch(eligible, reserve_of, args.disk_budget)
+    return {sra_id: reserve_of(sra_id) for sra_id, state in states.items() if state == "eligible"}
 
 
-def print_batch(name, batch, too_large, no_size, budget):
+def load_states(args):
+    """Return (status table, {sra_id: state} for the samples of --ids, {sra_id: reserved bytes})."""
+    table = read_table(args.staging_dir)
+    states = sample_states(read_ids(args.ids), table, args.input_dir, args.max_batches)
+    reserve = reserves(args, states)
+    for sra_id, reserved in reserve.items():
+        if reserved == 0:
+            states[sra_id] = "no size"
+        elif reserved > args.disk_budget:
+            states[sra_id] = "too large"
+    return table, states, reserve
+
+
+def choose_batch(states, reserve, budget):
+    """Return [(sra_id, reserved bytes)] for the next batch."""
+    batch, total = [], 0
+    for sra_id, state in states.items():
+        if state != "eligible":
+            continue
+        if total + reserve[sra_id] > budget:
+            break
+        batch.append((sra_id, reserve[sra_id]))
+        total += reserve[sra_id]
+    return batch
+
+
+def write_not_planned(staging_dir, states, reserve):
+    """Write the samples in state too large or no size to <staging-dir>/not_planned.tsv."""
+    rows = [(sra_id, state, reserve[sra_id]) for sra_id, state in states.items() if state in NOT_PLANNED_STATES]
+    os.makedirs(staging_dir, exist_ok=True)
+    path = os.path.join(staging_dir, NOT_PLANNED)
+    with open(path, "w", newline="") as f:
+        csv.writer(f, delimiter="\t").writerows([("sra_id", "state", "reserve_bytes")] + rows)
+    if rows:
+        counts = Counter(state for _, state, _ in rows)
+        print(f"  not planned: {counts['too large']} too large, {counts['no size']} no size, see {path}", flush=True)
+
+
+def print_batch(name, batch, budget):
     reserved = sum(size for _, size in batch)
     print(f"{name}: {len(batch)} samples, reserve {reserved / 1e9:,.1f} GB of {budget / 1e9:,.1f} GB", flush=True)
-    skipped_samples = (("reserve larger than the budget", too_large), ("no runinfo and an empty input dir", no_size))
-    for label, skipped in skipped_samples:
-        if skipped:
-            print(f"  not planned, {label}: {len(skipped)} ({', '.join(skipped[:5])})", flush=True)
 
 
 def write_batch_csv(path, batch):
@@ -248,12 +264,13 @@ def print_states(args, states, table):
 
 
 def plan(args):
-    table, states = load_states(args)
-    batch, too_large, no_size = next_batch(args, states)
+    table, states, reserve = load_states(args)
     print_states(args, states, table)
-    print_batch(f"next batch {next_batch_name(args.staging_dir)}", batch, too_large, no_size, args.disk_budget)
+    print_batch(f"next batch {next_batch_name(args.staging_dir)}", choose_batch(states, reserve, args.disk_budget),
+                args.disk_budget)
+    write_not_planned(args.staging_dir, states, reserve)
     if args.out:
-        write_batch_csv(args.out, batch)
+        write_batch_csv(args.out, choose_batch(states, reserve, args.disk_budget))
         print(f"  written to {args.out}")
 
 
@@ -264,7 +281,7 @@ def show_sample(args):
 
 
 def status(args):
-    table, states = load_states(args)
+    table, states, _ = load_states(args)
     print_states(args, states, table)
     rows = [row for row in table.values() if not args.batch or row["batch"] == args.batch]
 
@@ -307,19 +324,16 @@ def passes_size_gate(batch_dir, sra_id):
 def sample_result(steps, gate, completed):
     """Return (state, reason) from the last trace row of each step, the size gate and how the run ended."""
     failed = {process: row["exit"] for process, row in steps.items() if row["status"] not in OK_STATUS}
-    missing = ENDPOINTS - set(steps)
+    if not failed and gate and (completed or ENDPOINTS <= set(steps)):
+        return "done", ""
+    if not completed:
+        before_stop = ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items())
+                                if steps[process]["status"] != "ABORTED")
+        return "retry", f"run stopped; {before_stop}" if before_stop else "run stopped"
     if failed:
         reason = ", ".join(f"{process} exit {code}" for process, code in sorted(failed.items()))
-        state = "failed" if any(code not in TRANSIENT_EXITS for code in failed.values()) else "retry"
-    elif missing and not completed:
-        state, reason = "retry", "not run: " + ", ".join(sorted(missing))
-    elif not gate:
-        state, reason = "failed", "size gate"
-    else:
-        state, reason = "done", ""
-    if state == "failed" and not completed:
-        return "retry", f"run stopped; {reason}"
-    return state, reason
+        return ("failed" if set(failed.values()) - TRANSIENT_EXITS else "retry"), reason
+    return "failed", "size gate"
 
 
 def step_status(trace_row):
@@ -407,10 +421,11 @@ def run(args):
     signal.signal(signal.SIGINT, pass_on)
     n_run = 0
     while (args.n_batches is None or n_run < args.n_batches) and not signals:
-        table, states = load_states(args)
-        batch, too_large, no_size = next_batch(args, states)
+        table, states, reserve = load_states(args)
+        batch = choose_batch(states, reserve, args.disk_budget)
         if not batch:
-            print("no eligible sample fits the budget: stop")
+            print("no eligible sample: stop", flush=True)
+            write_not_planned(args.staging_dir, states, reserve)
             return
         name = next_batch_name(args.staging_dir)
         batch_dir = os.path.join(args.staging_dir, name)
@@ -418,7 +433,8 @@ def run(args):
         batch_csv = os.path.join(batch_dir, "batch.csv")
         write_batch_csv(batch_csv, batch)
         start_batch(args.staging_dir, table, name, [sra_id for sra_id, _ in batch])
-        print_batch(name, batch, too_large, no_size, args.disk_budget)
+        print_batch(name, batch, args.disk_budget)
+        write_not_planned(args.staging_dir, states, reserve)
 
         nextflow_run = subprocess.Popen([
             args.nextflow, "-log", os.path.join(batch_dir, "nextflow.log"), "run", args.pipeline,
@@ -549,7 +565,7 @@ def parse_args():
     command.add_argument("--pipeline", default=os.path.normpath(DEFAULT_PIPELINE), help="the main .nf file")
     command.add_argument("--nextflow", default="nextflow", help="the nextflow command")
     command.set_defaults(func=run)
-    command = commands.add_parser("status", parents=[staging, samples], help="print the sample states")
+    command = commands.add_parser("status", parents=[staging, samples, budget], help="print the sample states")
     command.add_argument("--batch", help="only the samples whose last batch is this one")
     command.set_defaults(func=status)
     command = commands.add_parser("sample", parents=[staging], help="print the row of one sample")
