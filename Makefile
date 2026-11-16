@@ -73,10 +73,10 @@ sample: ## the row of one sample (SAMPLE=SRR123)
 	@$(call need,STAGING_DIR SAMPLE)
 	python3 src/batches/batches.py sample --staging-dir $(abspath $(STAGING_DIR)) $(SAMPLE)
 
-promote: ## show what promote moves (YES=1 to move)
+promote: ## move the accepted samples (dryrun=1 to only show the counts)
 	@$(call need,STAGING_DIR VALID_DIR VALID_LOGS_DIR)
 	python3 src/batches/batches.py promote --staging-dir $(abspath $(STAGING_DIR)) --valid-dir $(abspath $(VALID_DIR)) \
-	    --logs-dir $(abspath $(VALID_LOGS_DIR)) $(if $(filter 1 yes,$(YES)),--yes)
+	    --logs-dir $(abspath $(VALID_LOGS_DIR)) $(if $(dryrun),--dry-run)
 
 queue: ## the Slurm jobs of this user
 	squeue -u $(ME) -o "%.10i %.32j %.8T %.10M %R"

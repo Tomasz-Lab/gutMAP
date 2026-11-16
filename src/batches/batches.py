@@ -5,7 +5,7 @@
     batches.py run     --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--n-batches N]
     batches.py status  --staging-dir S --ids IDS.csv --input-dir IN --disk-budget 20T [--batch batch_NNNN]
     batches.py sample  --staging-dir S SRA_ID
-    batches.py promote --staging-dir S --valid-dir VALID --logs-dir LOGS [--yes]
+    batches.py promote --staging-dir S --valid-dir VALID --logs-dir LOGS [--dry-run]
 
 <staging-dir>/samples.tsv is the only record of the sample states. It has one row for
 each sample that was in a batch: state, last batch, number of batches, size gate, the
@@ -39,8 +39,8 @@ promote: moves the dirs of the samples with gate yes and state done or failed fr
   or with only logs/ in it                       -> <logs-dir>/<step>/<id>/
   all other <step>/<id>/                         -> <valid-dir>/<step>/<id>/
 It uses os.rename, so all dirs must be on one filesystem. If a target exists, no dir
-of that sample moves. Without --yes, it only prints the counts. With --yes, it writes
-each move to <staging-dir>/promote.csv and sets the state promoted. After a stop, it
+of that sample moves. It writes each move to <staging-dir>/promote.csv and sets the
+state promoted. With --dry-run, it only prints the counts. After a stop, it
 moves only what is still in published/.
 
 Sample states:
@@ -534,8 +534,8 @@ def promote(args):
     print(f"missing    {len(missing):>8}  nothing in published/ and no 04_shared_assembly in --valid-dir")
     for line in conflicts[:5] + missing[:5]:
         print(f"  {line}")
-    if not args.yes:
-        print("dry run: nothing moved. Give --yes to move.")
+    if args.dry_run:
+        print("dry run: nothing moved.")
         return
 
     log_path = os.path.join(args.staging_dir, "promote.csv")
@@ -591,7 +591,7 @@ def parse_args():
     command = commands.add_parser("promote", parents=[staging], help="move the accepted samples")
     command.add_argument("--valid-dir", required=True, help="the target of the results, for example gutmap/valid")
     command.add_argument("--logs-dir", required=True, help="the target of the logs, for example gutmap/valid-logs")
-    command.add_argument("--yes", action="store_true", help="move the dirs (default: only print)")
+    command.add_argument("--dry-run", action="store_true", help="only print the counts, move nothing")
     command.set_defaults(func=promote)
     return parser.parse_args()
 

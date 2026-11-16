@@ -90,11 +90,11 @@ Run the commands from the launch dir, the dir that holds `src/` and the launch-d
    python3 src/batches/batches.py sample --staging-dir S SRR123456
    ```
 
-5. Promote the accepted samples. Without `--yes`, `promote` only shows the counts:
+5. Promote the accepted samples. With `--dry-run`, `promote` only shows the counts:
 
    ```
+   python3 src/batches/batches.py promote --staging-dir S --valid-dir gutmap/valid --logs-dir gutmap/valid-logs --dry-run
    python3 src/batches/batches.py promote --staging-dir S --valid-dir gutmap/valid --logs-dir gutmap/valid-logs
-   python3 src/batches/batches.py promote --staging-dir S --valid-dir gutmap/valid --logs-dir gutmap/valid-logs --yes
    ```
 
 `promote` takes the samples with gate `yes` and state `done` or `failed`. If a target dir exists, no dir of that sample moves.
