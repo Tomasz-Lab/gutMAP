@@ -24,10 +24,10 @@ runs the pipeline with that dir as outdir. Then it writes the results to samples
 copies the logs of failed tasks to failed_logs/, removes from published/ the outputs
 of the samples that promote does not take (their logs stay), rebuilds <staging-dir>/traces.tsv
 (the traces of all batches, with the columns batch and run) and runs `nextflow clean
--f`. The traces stay in the batch dirs. It repeats until no sample is eligible or
-after --n-batches batches. Start it from the launch dir of the pipeline. At its start,
-it finishes the batches of a stopped run. On SIGTERM or SIGINT, it passes the signal
-to nextflow, finishes the batch and stops.
+-f` for the session of the batch. The traces stay in the batch dirs. It repeats until
+no sample is eligible or after --n-batches batches. Start it from the launch dir of the
+pipeline. At its start, it finishes the batches of a stopped run. On SIGTERM or SIGINT,
+it passes the signal to nextflow, finishes the batch and stops.
 
 status: the sample states, the result of each last batch and the causes of the failed
 samples. sample: the row of one sample.
@@ -390,9 +390,19 @@ def remove_outputs(published, steps, sra_id):
                 os.remove(path)
 
 
+def session_id(batch_dir):
+    """Return the Nextflow session id of the batch run from its nextflow.log, or None."""
+    with open(os.path.join(batch_dir, "nextflow.log")) as f:
+        for line in f:
+            if "Session UUID: " in line:
+                return line.split("Session UUID: ")[1].strip()
+    return None
+
+
 def finish_batch(staging_dir, name, nextflow, completed):
-    """Write the results of the batch to samples.tsv, copy the logs of failed tasks, remove the outputs that
-    promote does not take, and remove the work dir."""
+    """Copy the logs of failed tasks, remove the outputs that promote does not take, remove the work dir and
+    write the results of the batch to samples.tsv. samples.tsv comes last: after a kill in this function, the
+    next run does all steps again."""
     batch_dir = os.path.join(staging_dir, name)
     published = os.path.join(batch_dir, "published")
     ids = [row["sra_id"] for row in read_csv(os.path.join(batch_dir, "batch.csv"))]
@@ -413,12 +423,14 @@ def finish_batch(staging_dir, name, nextflow, completed):
         if state == "stopped" or not gate:
             not_promoted.append(sra_id)
     copy_failed_logs(batch_dir, steps)
-    write_table(staging_dir, table)
     published_steps = step_dirs(published)
     for sra_id in not_promoted:
         remove_outputs(published, published_steps, sra_id)
     write_traces(staging_dir)
-    subprocess.run([nextflow, "clean", "-f", "-q"])
+    session = session_id(batch_dir)
+    if session:
+        subprocess.run([nextflow, "clean", "-f", "-q", session], check=True)
+    write_table(staging_dir, table)
     summary = ", ".join(f"{counts[state]} {state}" for state in ("done", "stopped", "failed"))
     print(f"{name} finished: {summary}; outputs removed for {len(not_promoted)} samples", flush=True)
 
