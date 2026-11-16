@@ -26,8 +26,8 @@ of the samples that promote does not take (their logs stay), rebuilds <staging-d
 (the traces of all batches, with the columns batch and run) and runs `nextflow clean
 -f` for the session of the batch. The traces stay in the batch dirs. It repeats until
 no sample is eligible or after --n-batches batches. Start it from the launch dir of the
-pipeline. At its start, it finishes the batches of a stopped run. On SIGTERM or SIGINT,
-it passes the signal to nextflow, finishes the batch and stops.
+pipeline. At its start, it finishes the batches of a stopped run. --n-batches 0 only
+does that.
 
 status: the sample states, the result of each last batch and the causes of the failed
 samples. sample: the row of one sample.
@@ -70,7 +70,6 @@ import glob
 import os
 import re
 import shutil
-import signal
 import subprocess
 import time
 from collections import Counter, defaultdict
@@ -440,17 +439,8 @@ def run(args):
         print(f"{name} has samples in state running, so its run stopped. Finish it first.", flush=True)
         finish_batch(args.staging_dir, name, args.nextflow, completed=False)
 
-    nextflow_run, signals = None, []
-
-    def pass_on(signum, frame):
-        signals.append(signum)
-        if nextflow_run:
-            nextflow_run.send_signal(signum)
-
-    signal.signal(signal.SIGTERM, pass_on)
-    signal.signal(signal.SIGINT, pass_on)
     n_run = 0
-    while (args.n_batches is None or n_run < args.n_batches) and not signals:
+    while args.n_batches is None or n_run < args.n_batches:
         table, states, reserve = load_states(args)
         batch = choose_batch(states, reserve, args.disk_budget)
         if not batch:
@@ -466,19 +456,17 @@ def run(args):
         print_batch(name, batch, args.disk_budget)
         write_not_planned(args.staging_dir, states, reserve)
 
-        nextflow_run = subprocess.Popen([
+        # Not subprocess.run: on Ctrl-C it kills nextflow before nextflow can cancel its tasks.
+        returncode = subprocess.Popen([
             args.nextflow, "-log", os.path.join(batch_dir, "nextflow.log"), "run", args.pipeline,
             "--input", batch_csv, "--indir", args.input_dir, "--outdir", batch_dir,
-            "--limit", str(len(batch)), "-ansi-log", "false"])
-        returncode = nextflow_run.wait()
+            "--limit", str(len(batch)), "-ansi-log", "false"]).wait()
         if not read_trace(batch_dir):
             write_table(args.staging_dir, table)
             raise SystemExit(f"{name}: nextflow exited with {returncode} before any task ended. "
                              f"See {batch_dir}/nextflow.log")
-        finish_batch(args.staging_dir, name, args.nextflow, completed=returncode == 0 and not signals)
+        finish_batch(args.staging_dir, name, args.nextflow, completed=returncode == 0)
         n_run += 1
-    if signals:
-        raise SystemExit(f"stopped by signal {signals[0]}")
 
 
 # --- promote ---
@@ -534,8 +522,8 @@ def plan_promote(args, table):
 def promote(args):
     table = read_table(args.staging_dir)
     if any(row["state"] == "running" for row in table.values()):
-        raise SystemExit("samples.tsv has samples in state running. Wait until run ends, "
-                         "or start run again to finish a stopped batch.")
+        raise SystemExit("samples.tsv has samples in state running. Wait until run ends. "
+                         "After a stop, run --n-batches 0 finishes the stopped batch.")
     ready, conflicts, missing = plan_promote(args, table)
     targets = [target for _, moves in ready for _, target in moves]
     to_valid = sum(target.startswith(os.path.join(args.valid_dir, "")) for target in targets)

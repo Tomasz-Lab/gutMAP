@@ -62,8 +62,8 @@ run: ## submit the batches job (N_BATCHES=n to stop after n batches)
 	J=$$($(SBATCH) src/batches/batches.sbatch $(BATCH_ARGS) --disk-budget $(DISK_BUDGET) $(if $(N_BATCHES),--n-batches $(N_BATCHES))) \
 	    && echo "batches job $$J"
 
-stop: ## stop the batches job: it finishes the batch that runs and ends
-	scancel --signal=TERM --batch --name=gutmap-batches --user=$(ME)
+stop: ## stop the batches job; the next run finishes its batch
+	scancel --name=gutmap-batches --user=$(ME)
 
 status: ## sample states and the result of each batch
 	@$(call need,STAGING_DIR IDS INPUT_DIR DISK_BUDGET)

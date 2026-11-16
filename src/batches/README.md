@@ -101,9 +101,8 @@ Run the commands from the launch dir, the dir that holds `src/` and the launch-d
 
 ## Stop and continue
 
-- To stop the job, send `scancel --signal=TERM --batch JOBID`. `batches.py` stops Nextflow, writes the results of the batch and ends. The samples that did not end get `stopped`, and a later batch runs them again.
-- At the time limit, Slurm sends the same signal 15 minutes before the end. Submit the job again to continue.
-- After a plain `scancel` or a node failure, the samples of the batch stay `running`. The next `run` finishes that batch first.
+- To stop the job, send `scancel JOBID` (`make stop`). Slurm stops `batches.py` and Nextflow, and Nextflow cancels its tasks. The time limit and a node failure stop the job in the same way. The samples of the batch stay `running`.
+- The next `run` finishes that batch first. The samples that did not end get `stopped`, and a later batch runs them again. `run --n-batches 0` only finishes the batch.
 - Each batch is a new Nextflow run without `-resume`. After each batch, `run` removes the work dir of that run with `nextflow clean -f <session id>`. The session id comes from `<batch>/nextflow.log`.
 - Only one `run` or `promote` at a time can use a staging dir. The `singleton` dependency of `batches.sbatch` stops a second job until the first ends. `promote` stops if a sample is `running`.
 

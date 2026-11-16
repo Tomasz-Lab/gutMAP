@@ -29,7 +29,7 @@ The `Makefile` runs the workflow from the launch dir, the dir that holds `src/`.
    make promote YES=1
    ```
 
-- `make stop` stops the batches job after it finishes the batch that runs. `make run` continues the work.
+- `make stop` stops the batches job. The next `make run` finishes the batch that ran, then continues. `make run N_BATCHES=0` only finishes that batch, for example before `make promote`.
 - `make sample SAMPLE=SRR123` shows the state of one sample and of each of its steps.
 - `make queue` shows your Slurm jobs. `make help` lists all targets.
 - Downloads and batches must not run at the same time. `make download` and `make run` stop if a job of the other kind is in the queue.
