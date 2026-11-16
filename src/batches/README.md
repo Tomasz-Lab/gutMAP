@@ -57,7 +57,7 @@ After each batch, `run` removes from `published/` the outputs of the samples tha
 
 ## Disk budget
 
-Each sample reserves `--reserve-factor` (default 5.3) times its FASTQ size. The FASTQ size comes from runinfo: 2 × `bases` + 120 B × `spots`. If runinfo has no bases for a sample, the sample reserves `--input-factor` (default 36) times the size of its input dir. A batch takes the eligible samples in the order of `--ids` until the next sample does not fit in `--disk-budget`.
+Each sample reserves `--reserve-factor` (default 4.5) times its FASTQ size. The FASTQ size comes from runinfo: 2 × `bases` + 120 B × `spots`. If runinfo has no bases for a sample, the sample reserves `--input-factor` (default 36) times the size of its input dir. A batch takes the eligible samples in the order of `--ids` until the next sample does not fit in `--disk-budget`.
 
 A sample whose reserve is larger than the budget gets the state `too large`, and no batch takes it. `plan`, `run` and `status` calculate this state again at each call from the budget that you give. `plan` and `run` write these samples and their reserve to `not_planned.tsv`. When no sample is `eligible`, `run` stops.
 

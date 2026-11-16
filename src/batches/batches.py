@@ -568,7 +568,7 @@ def parse_args():
     budget = argparse.ArgumentParser(add_help=False)
     budget.add_argument("--disk-budget", type=parse_size, required=True, help="for example 20T (T = 10^12 bytes)")
     budget.add_argument("--runinfo", help="default: <input-dir>.download/runinfo.csv")
-    budget.add_argument("--reserve-factor", type=float, default=5.3, help="reserve / FASTQ size from runinfo")
+    budget.add_argument("--reserve-factor", type=float, default=4.5, help="reserve / FASTQ size from runinfo")
     budget.add_argument("--input-factor", type=float, default=36.0,
                         help="reserve / size of the input dir, when runinfo has no bases")
 
