@@ -41,9 +41,23 @@ The state dir `<input-dir>.download/` also holds `attempts.csv` (one row for eac
 
 ## Run with Slurm
 
-The `Makefile` at the repo root runs these commands with the settings of `config.mk`. See the README at the repo root.
+The `Makefile` at the repo root runs these commands with the settings of `config.mk`. Run `make` from the repo root:
 
-Submit the jobs from this dir:
+1. Set `IDS`, `INPUT_DIR`, `KF_ENV`, `ACCOUNT` and `PARTITION` in `config.mk`.
+2. Get the runinfo, show the plan, submit the download job and the validate job, and show the result:
+
+   ```
+   make runinfo
+   make download-plan
+   make download
+   make download-status
+   ```
+
+- `make download` stops if a batches job is in the queue. Downloads and batches must not run at the same time.
+- `make validate` submits only the validate job.
+- `make help` lists all targets. A setting on the command line replaces the one in `config.mk`, for example `make download METHODS=ena-ftp:4`.
+
+Without `make`, submit the jobs from this dir:
 
 ```
 python3 download.py runinfo --ids samples.csv --input-dir INPUT_DIR

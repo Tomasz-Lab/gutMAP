@@ -65,9 +65,30 @@ Downloads must not run at the same time as a batch, because the budget does not 
 
 ## Run on Helios
 
-The `Makefile` at the repo root runs these commands with the settings of `config.mk`. See the README at the repo root.
+The `Makefile` at the repo root runs these commands with the settings of `config.mk`. Run `make` from the repo root:
 
-Run the commands from the launch dir, the dir that holds `src/` and the launch-dir `nextflow.config`.
+1. Set `STAGING_DIR`, `IDS`, `INPUT_DIR`, `DISK_BUDGET`, `VALID_DIR`, `VALID_LOGS_DIR`, `ACCOUNT` and `PARTITION` in `config.mk`.
+2. When the download and validate jobs end, show the next batch, submit the batches job and show the sample states:
+
+   ```
+   make plan
+   make run
+   make status
+   ```
+
+3. Promote the accepted samples. With `dryrun=1`, `promote` only shows the counts:
+
+   ```
+   make promote dryrun=1
+   make promote
+   ```
+
+- `make stop` stops the batches job. The next `make run` finishes the batch that ran, then continues. `make run N_BATCHES=0` only finishes that batch, for example before `make promote`.
+- `make sample SAMPLE=SRR123` shows the state of one sample and of each of its steps. `make queue` shows your Slurm jobs.
+- `make run` stops if a download or validate job is in the queue. Downloads and batches must not run at the same time.
+- `make help` lists all targets. A setting on the command line replaces the one in `config.mk`, for example `make run N_BATCHES=1`.
+
+Without `make`, run the commands from the launch dir, the dir that holds `src/` and the launch-dir `nextflow.config`.
 
 1. Download the samples and their runinfo with `../download`.
 2. Show the next batch:
