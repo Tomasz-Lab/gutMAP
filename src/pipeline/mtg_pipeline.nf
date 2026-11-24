@@ -112,7 +112,7 @@ workflow {
 process CHECK_AND_CONVERT_READS {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "kingfisher"  // kingfisher includes fasterq-dump
+    conda "bioconda::kingfisher=0.4.1 bioconda::sra-tools=3.2.1"
     cpus 8
     memory "20 GB"
 
@@ -132,7 +132,7 @@ process FASTP_QC {
     tag "${meta.id}"
     publishDir "$params.outdir/published/02_fastp_qc/${meta.id}", mode: 'copy', pattern: "{*.json,*.html}"
     afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "fastp"
+    conda "bioconda::fastp=1.0.1"
 
     cpus 6
     memory "30 GB"
@@ -164,7 +164,7 @@ process FASTP_QC {
 process REMOVE_HUMAN_READS {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/03_non_human_reads/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bowtie2"
+    conda "bioconda::bowtie2=2.5.4"
 
     cpus 16
     memory "32 GB"
@@ -195,7 +195,7 @@ process MEGAHIT_ASSEMBLY {
     tag "${meta.id}"
     publishDir "$params.outdir/published/04_shared_assembly/${meta.id}", mode: 'copy', pattern: "final.contigs.fa"
     afterScript "D=${params.outdir}/published/04_shared_assembly/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} log options.json \$D/ 2>/dev/null || true"
-    conda "megahit"
+    conda "bioconda::megahit=1.2.9"
 
     cpus 20
     memory "40 GB"
@@ -221,7 +221,7 @@ process SYLPH_TAXONOMY {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_1/01_taxonomy/${meta.id}", mode: 'copy', pattern: "${meta.id}.sylph_profile.tsv"
     afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "sylph"
+    conda "bioconda::sylph=0.9.0"
 
     cpus 2
     memory "40 GB"
@@ -339,7 +339,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
     afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "pandas"
+    conda "conda-forge::pandas=2.3.3"
 
     cpus 1
     memory "10 GB"
@@ -362,7 +362,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 process MAP_FOR_BINNING {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bowtie2 samtools"
+    conda "bioconda::bowtie2=2.5.4 bioconda::samtools=1.22.1"
 
     cpus 30
     memory "60 GB"
@@ -385,7 +385,7 @@ process MAP_FOR_BINNING {
 process METABAT2_BINNING {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/branch_3/02_binning/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "metabat2"
+    conda "bioconda::metabat2=2.18"
 
     cpus 8
     memory "20 GB"
@@ -410,7 +410,7 @@ process CHECKM_QA {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/${meta.id}", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
     afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} checkm2.log \$D/ 2>/dev/null || true"
-    conda "checkm2"
+    conda "bioconda::checkm2=1.1.0"
 
     cpus 12
     memory "50 GB"
@@ -444,7 +444,7 @@ process FILTER_AND_ANNOTATE {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/${meta.id}", mode: 'copy', pattern: '{*.tsv,hq_bins}' // move mode does not work and throws java.nio.file.DirectoryNotEmptyException for hq_bins
     afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
-    conda "python=3.12 gtdbtk pandas"
+    conda "python=3.12 bioconda::gtdbtk=2.6.1 conda-forge::pandas=2.3.3"
 
     cpus { task.attempt == 1 ? 20 : 35 }
     memory { task.attempt == 1 ? "80 GB" : "140 GB" }
