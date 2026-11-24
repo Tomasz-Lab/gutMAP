@@ -123,7 +123,7 @@ workflow {
 
 process CHECK_AND_CONVERT_READS {
     tag "fasterq-dump: $sra_id"
-    conda "kingfisher"  // kingfisher includes fasterq-dump
+    conda "bioconda::kingfisher=0.4.1 bioconda::sra-tools=3.2.1"
     cpus 8
     memory "20 GB"
 
@@ -144,7 +144,7 @@ process FASTP_QC {
     publishDir "$params.outdir/published/02_fastp_qc/$sra_id", mode: 'copy', pattern: "{*.json,*.html}"
     publishDir "$params.outdir/published/02_fastp_qc/$sra_id/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/02_fastp_qc/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "fastp"
+    conda "bioconda::fastp=1.0.1"
 
     cpus 6
     memory "30 GB"
@@ -191,7 +191,7 @@ process REMOVE_HUMAN_READS {
     tag "Bowtie2 Decontam: $sra_id"
     publishDir "$params.outdir/published/03_non_human_reads/$sra_id/logs", mode: 'copy', pattern: ".command*"  // do not try for the 3rd time to use move here, because it results in broken links O.O
     afterScript "D=${params.outdir}/published/03_non_human_reads/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "bowtie2"
+    conda "bioconda::bowtie2=2.5.4"
 
     cpus 16
     memory "32 GB"
@@ -230,7 +230,7 @@ process MEGAHIT_ASSEMBLY {
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id", mode: 'copy', pattern: "final.contigs.fa"
     publishDir "$params.outdir/published/04_shared_assembly/$sra_id/logs", mode: 'copy', pattern: "{.command*,log,options.json}"
     afterScript "D=${params.outdir}/published/04_shared_assembly/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "megahit"
+    conda "bioconda::megahit=1.2.9"
 
     cpus 20
     memory "40 GB"
@@ -272,7 +272,7 @@ process SYLPH_TAXONOMY {
     publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id", mode: 'copy', pattern: "${sra_id}.sylph_profile.tsv"
     publishDir "$params.outdir/published/branch_1/01_taxonomy/$sra_id/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "sylph"
+    conda "bioconda::sylph=0.9.0"
 
     cpus 2
     memory "40 GB"
@@ -314,7 +314,7 @@ process BAKTA_BATCH {
         cp -f ${task.workDir}/.command.* \$D/logs/ 2>/dev/null || true
     done
     """
-    conda "bakta ncbi-amrfinderplus"
+    conda "bioconda::bakta=1.12.0 bioconda::ncbi-amrfinderplus=4.2.7"
     cpus { Math.min(sra_ids.size() * 5, 100) }
     memory { "${100 + sra_ids.size() * 15} GB" }
     queue 'plgrid-bigmem'
@@ -516,7 +516,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}", mode: 'copy', pattern: "${sra_id}_gene_quantification.tsv"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${sra_id}/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "pandas"
+    conda "conda-forge::pandas=2.3.3"
 
     cpus 1
     memory "10 GB"
@@ -614,7 +614,7 @@ process MAP_FOR_BINNING {
     tag "Map for Binning: $sra_id"
     publishDir "$params.outdir/published/branch_3/01_mapping/$sra_id/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "bowtie2 samtools"
+    conda "bioconda::bowtie2=2.5.4 bioconda::samtools=1.22.1"
 
     cpus 30
     memory "60 GB"
@@ -643,7 +643,7 @@ process METABAT2_BINNING {
     tag "MetaBAT2 Binning: $sra_id"
     publishDir "$params.outdir/published/branch_3/02_binning/$sra_id/logs", mode: 'copy', pattern: ".command*"
     afterScript "D=${params.outdir}/published/branch_3/02_binning/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* \$D/ 2>/dev/null || true"
-    conda "metabat2"
+    conda "bioconda::metabat2=2.18"
 
     cpus 8
     memory "20 GB"
@@ -669,7 +669,7 @@ process CHECKM_QA {
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id", mode: 'copy', pattern: "{quality_report.tsv,DIAMOND_RESULTS.tsv}"
     publishDir "$params.outdir/published/branch_3/03_checkm_qa/$sra_id/logs", mode: 'copy', pattern: "{.command*,checkm2.log}"
     afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* checkm2.log \$D/ 2>/dev/null || true"
-    conda "checkm2"
+    conda "bioconda::checkm2=1.1.0"
 
     cpus 12
     memory "50 GB"
@@ -708,7 +708,7 @@ process FILTER_AND_ANNOTATE {
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id", mode: 'copy', pattern: '{*.tsv,hq_bins}' // move mode does not work and throws java.nio.file.DirectoryNotEmptyException for hq_bins
     publishDir "$params.outdir/published/branch_3/04_filter_and_annotate/$sra_id/logs", mode: 'copy', pattern: '{.command*,gtdbtk.log,gtdbtk.json}'
     afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${sra_id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.* gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
-    conda "python=3.12 gtdbtk pandas"
+    conda "python=3.12 bioconda::gtdbtk=2.6.1 conda-forge::pandas=2.3.3"
 
     cpus { task.attempt == 1 ? 20 : 35 }
     memory { task.attempt == 1 ? "80 GB" : "140 GB" }
