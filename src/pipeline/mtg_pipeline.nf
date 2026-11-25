@@ -237,7 +237,7 @@ process SYLPH_TAXONOMY {
     script:
     def reads_args = meta.single_end ? "-r ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
     """
-    sylph profile ${params.sylph_db} ${reads_args} -o ${meta.id}.sylph_profile.tsv -p ${task.cpus}
+    sylph profile ${params.sylph_db} ${reads_args} -o ${meta.id}.sylph_profile.tsv -t ${task.cpus}
     """
 }
 
