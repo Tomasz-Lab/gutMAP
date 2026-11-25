@@ -208,8 +208,10 @@ process MEGAHIT_ASSEMBLY {
 
     script:
     def reads_args = meta.single_end ? "-r ${reads}" : "-1 ${reads[0]} -2 ${reads[1]}"
+    // Without -m, MEGAHIT takes 90 % of the node RAM, not of the job, and Slurm kills it (exit 247).
+    def memory_bytes = (long) (task.memory.toBytes() * 0.85)
     """
-    megahit ${reads_args} -o ${meta.id}_megahit_out --tmp-dir \${MEMFS:-\$PWD} -t ${task.cpus} --min-contig-len 1500
+    megahit ${reads_args} -o ${meta.id}_megahit_out --tmp-dir \${MEMFS:-\$PWD} -t ${task.cpus} -m ${memory_bytes} --min-contig-len 1500
     mv ${meta.id}_megahit_out/{final.contigs.fa,log,options.json} .
     """
 }
