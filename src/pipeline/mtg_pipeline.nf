@@ -112,7 +112,7 @@ workflow {
 process CHECK_AND_CONVERT_READS {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::kingfisher=0.4.1 bioconda::sra-tools=3.2.1"
+    conda "bioconda::sra-tools=3.4.1"
     cpus 2
     memory "4000 MB"
 
@@ -132,7 +132,7 @@ process FASTP_QC {
     tag "${meta.id}"
     publishDir "$params.outdir/published/02_fastp_qc/${meta.id}", mode: 'copy', pattern: "{*.json,*.html}"
     afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::fastp=1.0.1"
+    conda "bioconda::fastp=1.4.0"
 
     cpus 4
     memory "8000 MB"
@@ -164,7 +164,7 @@ process FASTP_QC {
 process REMOVE_HUMAN_READS {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/03_non_human_reads/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::bowtie2=2.5.4"
+    conda "bioconda::bowtie2=2.5.5"
 
     cpus 16
     memory "32 GB"
@@ -288,7 +288,7 @@ process CREATE_CATALOG_AND_INDEX {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_2/02_gene_catalog/${meta.id}", mode: 'copy', pattern: "${meta.id}_clustered_catalog.fna"
     afterScript "D=${params.outdir}/published/branch_2/02_gene_catalog/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.2.1"
+    conda "bioconda::cd-hit=4.8.1 bioconda::bwa-mem2=2.3"
 
     cpus 4
     memory "20 GB"
@@ -314,7 +314,7 @@ process ALIGN_AND_QUANTIFY_READS {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_2/03_gene_quantification/${meta.id}", mode: 'copy', pattern: "${meta.id}.idxstats.txt"
     afterScript "D=${params.outdir}/published/branch_2/03_gene_quantification/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::bwa-mem2=2.2.1 bioconda::samtools=1.19.2"
+    conda "bioconda::bwa-mem2=2.3 bioconda::samtools=1.25"
 
     cpus 16
     memory "40 GB"
@@ -340,7 +340,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
     tag "${meta.id}"
     publishDir "$params.outdir/published/branch_2/04_tpm_and_annotate/${meta.id}", mode: 'copy', pattern: "${meta.id}_gene_quantification.tsv"
     afterScript "D=${params.outdir}/published/branch_2/04_tpm_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "conda-forge::pandas=2.3.3"
+    conda "conda-forge::pandas=3.1.1"
 
     cpus 1
     memory "10 GB"
@@ -363,7 +363,7 @@ process CALCULATE_TPM_AND_ANNOTATE {
 process MAP_FOR_BINNING {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
-    conda "bioconda::bowtie2=2.5.4 bioconda::samtools=1.22.1"
+    conda "bioconda::bowtie2=2.5.5 bioconda::samtools=1.25"
 
     cpus 20
     memory { task.attempt == 1 ? "40000 MB" : "80 GB" }
