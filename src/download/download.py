@@ -41,6 +41,8 @@ CAUSE_PATTERNS = [
 ]
 PROGRESS_SECONDS = 60
 RUNINFO_BATCH = 200
+LONG_READ_PLATFORM = "OXFORD_NANOPORE"
+MAX_AVG_LENGTH = 1000  # avgLength is bases / spots: a paired spot holds both mates
 
 
 def utc_now():
@@ -102,6 +104,12 @@ def read_runinfo(state_dir):
     return {row["Run"]: row for row in read_records(os.path.join(state_dir, "runinfo.csv"))}
 
 
+def long_reads(runinfo_rows):
+    """Return the ids of the runs that the short-read steps cannot use."""
+    return {sra_id for sra_id, row in runinfo_rows.items()
+            if row["Platform"] == LONG_READ_PLATFORM or int(row["avgLength"] or 0) > MAX_AVG_LENGTH}
+
+
 def subdirs(path):
     return set(os.listdir(path)) if os.path.isdir(path) else set()
 
@@ -122,13 +130,15 @@ def read_history(state_dir):
     return attempt_rows, failures
 
 
-def classify(samples, input_dir, state_dir, failures, max_attempts):
+def classify(samples, input_dir, state_dir, failures, max_attempts, long_read_ids):
     # downloaded/ first: validate can move a dir to the input dir between the two listings.
     downloaded = subdirs(os.path.join(state_dir, "downloaded"))
     present = subdirs(input_dir)
-    classes = {"present": [], "downloaded": [], "exhausted": [], "to download": []}
+    classes = {"long reads": [], "present": [], "downloaded": [], "exhausted": [], "to download": []}
     for sra_id in samples:
-        if sra_id in present:
+        if sra_id in long_read_ids:
+            classes["long reads"].append(sra_id)
+        elif sra_id in present:
             classes["present"].append(sra_id)
         elif sra_id in downloaded:
             classes["downloaded"].append(sra_id)
@@ -154,10 +164,12 @@ def plan(args, failures):
         if size is None and megabytes:
             samples[sra_id] = megabytes * 10**6
     from_runinfo = sum(size is not None for size in samples.values()) - from_csv
-    classes = classify(samples, args.input_dir, args.state_dir, failures, args.max_attempts)
+    classes = classify(samples, args.input_dir, args.state_dir, failures, args.max_attempts,
+                       long_reads(runinfo_rows))
     n_rows = len(samples) + empty_rows + duplicates + not_runs
     notes = {"downloaded": "wait for the content check",
-             "exhausted": f"{args.max_attempts} or more counted attempts"}
+             "exhausted": f"{args.max_attempts} or more counted attempts",
+             "long reads": f"{LONG_READ_PLATFORM} or avgLength > {MAX_AVG_LENGTH}, not downloaded"}
 
     print(f"{args.ids}: {len(samples)} samples from {n_rows} rows "
           f"(not used: {empty_rows} empty, {duplicates} duplicate, {not_runs} not a run accession)")

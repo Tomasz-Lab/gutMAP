@@ -27,6 +27,8 @@ The state dir `<input-dir>.download/` also holds `attempts.csv` (one row for eac
 
 `runinfo` adds the NCBI SRA runinfo row of each new sample to `<input-dir>.download/runinfo.csv`. The batch selection uses `bases` and `spots` from it to estimate the disk use of each sample. `plan` uses `size_MB` when the `--ids` CSV has no `Bytes` value.
 
+`plan` and `run` skip the runs with `Platform` `OXFORD_NANOPORE` or `avgLength` above 1000 (class `long reads`). The short-read steps cannot use these runs. For a paired run, `avgLength` counts both mates.
+
 - Run it before `plan`, on a login node. It sends 200 IDs in each request, so 100k samples take some minutes.
 - It asks only for the samples that are not in `runinfo.csv`. If it stops, run it again.
 - If a request for 200 samples still fails after its retries, `runinfo` asks for each sample of it alone. NCBI fails on some samples every time, for example `SRR769534`.
