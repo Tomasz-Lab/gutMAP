@@ -113,8 +113,8 @@ process CHECK_AND_CONVERT_READS {
     tag "${meta.id}"
     afterScript "D=${params.outdir}/published/01_check_and_convert/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::kingfisher=0.4.1 bioconda::sra-tools=3.2.1"
-    cpus 8
-    memory "20 GB"
+    cpus 2
+    memory "4000 MB"
 
     input:
         tuple val(meta), path(sra_file)
@@ -134,8 +134,8 @@ process FASTP_QC {
     afterScript "D=${params.outdir}/published/02_fastp_qc/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::fastp=1.0.1"
 
-    cpus 6
-    memory "30 GB"
+    cpus 4
+    memory "8000 MB"
 
     input:
         tuple val(meta), path(reads)
@@ -225,7 +225,7 @@ process SYLPH_TAXONOMY {
     afterScript "D=${params.outdir}/published/branch_1/01_taxonomy/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::sylph=0.9.0"
 
-    cpus 2
+    cpus 4
     memory "40 GB"
 
     input:
@@ -365,8 +365,11 @@ process MAP_FOR_BINNING {
     afterScript "D=${params.outdir}/published/branch_3/01_mapping/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::bowtie2=2.5.4 bioconda::samtools=1.22.1"
 
-    cpus 30
-    memory "60 GB"
+    cpus 20
+    memory { task.attempt == 1 ? "40000 MB" : "80 GB" }
+
+    errorStrategy { task.exitStatus == 137 && task.attempt == 1 ? 'retry' : 'ignore' }
+    maxRetries 1
 
     input:
         tuple val(meta), path(reads), path(contigs)
@@ -388,8 +391,8 @@ process METABAT2_BINNING {
     afterScript "D=${params.outdir}/published/branch_3/02_binning/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} \$D/ 2>/dev/null || true"
     conda "bioconda::metabat2=2.18"
 
-    cpus 8
-    memory "20 GB"
+    cpus 4
+    memory "8000 MB"
 
     input:
         tuple val(meta), path(bam), path(contigs)
@@ -413,8 +416,8 @@ process CHECKM_QA {
     afterScript "D=${params.outdir}/published/branch_3/03_checkm_qa/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} checkm2.log \$D/ 2>/dev/null || true"
     conda "bioconda::checkm2=1.1.0"
 
-    cpus 12
-    memory "50 GB"
+    cpus 8
+    memory "32000 MB"
 
     input:
         tuple val(meta), path(bins_dir)
@@ -447,7 +450,7 @@ process FILTER_AND_ANNOTATE {
     afterScript "D=${params.outdir}/published/branch_3/04_filter_and_annotate/${meta.id}/logs; mkdir -p \$D && cp -f ${task.workDir}/.command.{sh,err,out,log} gtdbtk.log gtdbtk.json \$D/ 2>/dev/null || true"
     conda "python=3.12 bioconda::gtdbtk=2.6.1 conda-forge::pandas=2.3.3"
 
-    cpus { task.attempt == 1 ? 20 : 35 }
+    cpus 20
     memory { task.attempt == 1 ? "80 GB" : "140 GB" }
 
     errorStrategy { task.attempt <=1 ? 'retry' : 'ignore' }

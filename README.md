@@ -54,7 +54,7 @@ IDs (CSV)
 - **Acceptance:** a sample is accepted when its sylph profile is larger than 218 B (more than the header) and its contigs file is not empty.
 - **Empty input:** a sample with no non-human reads, no contigs or no bins ends that branch without a failure.
 - **High-quality bins:** completeness 90 % or more and contamination 5 % or less, from CheckM2.
-- **Retry:** a failed task does not run again. The exception is `FILTER_AND_ANNOTATE`, which runs once more with 35 cores and 140 GB.
+- **Retry:** a failed task does not run again, with two exceptions. `FILTER_AND_ANNOTATE` runs once more with 140 GB. After an OOM kill (exit 137), `MAP_FOR_BINNING` runs once more with 80 GB.
 - **Slurm:** `nextflow.config` sets the account and the partitions `plgrid` and `plgrid-bigmem`. Each task is one Slurm job.
 
 ## Requirements
