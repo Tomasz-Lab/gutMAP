@@ -331,9 +331,8 @@ process ALIGN_AND_QUANTIFY_READS {
     def sorted_bam = "${meta.id}.bam"
     """
     set -o pipefail
-    bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads} | samtools view -b - | samtools sort --threads ${task.cpus} -o ${sorted_bam}
-    samtools index --threads ${task.cpus} ${sorted_bam}
-    samtools idxstats --threads ${task.cpus} ${sorted_bam} > ${meta.id}.idxstats.txt
+    bwa-mem2 mem -t ${task.cpus} ${index_base} ${reads} | samtools sort --threads ${task.cpus} --write-index -o ${sorted_bam}##idx##${sorted_bam}.bai
+    samtools idxstats ${sorted_bam} > ${meta.id}.idxstats.txt
     """
 }
 
